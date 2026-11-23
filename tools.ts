@@ -15,7 +15,7 @@ import { checkWriteAllowed, isWriteAllowActive } from './write-allow.js';
 import { isCredentialPath, credentialFilesIn, noteSecrets, secretEgressReason } from './secret-egress.js';
 import { _invalidateReadDedup } from './history.js';
 import { sandboxCall, EXEC_FILE_MAX_CHARS } from './exec-sandbox-host.js';
-import { omittedFileWriteMessage, planWorkspaceCopy, shrinkNote, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch, addLiveFolderInput, withLiveFiles } from './exec-limits.js';
+import { omittedFileWriteMessage, omittedFileDeleteMessage, namesFile, EXEC_COPY_MAX_CHARS, planWorkspaceCopy, shrinkNote, snapshotEpoch, snapshotWorkspace, staleGuard, workspaceEpoch, addLiveFolderInput, withLiveFiles } from './exec-limits.js';
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
@@ -2965,7 +2965,10 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 for (const rec of plan.send) files[rec.name] = rec.encoding === 'base64' ? { base64: rec.content as string } : rec.content as string;
                 for (const [n, size] of plan.omitted) { omitted.add(n); files[n] = { omitted: size, ...(plan.large.has(n) ? { large: true } : {}) }; }
                 const folderSizes = new Map<string, number>();
-                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes });
+                // The folder's files share the run's copy limit with the workspace's records: what the plan sent is spent, the rest is the folder's.
+                const spent = plan.send.reduce((n, r) => n + String(r.content ?? '').length, 0);
+                await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes,
+                    budget: { chars: Math.max(0, EXEC_COPY_MAX_CHARS - spent), named: n => namesFile(args.code, n) } });
                 for (const n of omitted) if (!(n in files)) files[n] = { omitted: folderSizes.get(n) ?? 0, large: true };
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
@@ -2986,6 +2989,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const write_errors = [];
             const deletedOk: string[] = [];
             for (const path of (run.deleted ?? []) as string[]) {
+                if (omitted.has(path)) { write_errors.push(omittedFileDeleteMessage(path)); continue; }   // a file the run never saw is not deleted on its say-so
                 if (changedMeanwhile(path)) { write_errors.push(`${path}: not deleted, the file changed while the code ran; kept the newer version`); continue; }
                 // A deletion that failed is reported as one, not listed as done (codex R193).
                 try { await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }); }

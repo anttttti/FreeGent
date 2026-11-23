@@ -163,6 +163,13 @@ describe('files left out of the run\'s copy', () => {
         expect(() => fs.mkdirSync('assets/big.png', { recursive: true })).toThrow(/EEXIST/);
         expect(fs.statSync('assets/big.png').isFile()).toBe(true);
     });
+    it('a left-out file the run wrote and then removed is not queued for deletion: the original was never the run\'s to delete (commit review of 3376cb1, Codex)', () => {
+        const { fs, deleted } = createWorkspaceFs({ 'assets/big.png': { omitted: 700000 }, 'keep.txt': 'k' });
+        fs.writeFileSync('assets/big.png', 'x');
+        fs.unlinkSync('assets/big.png');
+        fs.unlinkSync('keep.txt');
+        expect([...deleted]).toEqual(['keep.txt']);   // a file it did get is still deleted
+    });
     it('mkdirSync recursive below a left-out file is ENOTDIR, and the file does not become a folder (commit review of b686d2b)', () => {
         const { fs } = createWorkspaceFs({ 'assets/big.png': { omitted: 700000 } });
         expect(() => fs.mkdirSync('assets/big.png/sub', { recursive: true })).toThrow(/ENOTDIR/);

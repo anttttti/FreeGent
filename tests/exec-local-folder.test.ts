@@ -67,6 +67,16 @@ describe('live Local Folder files in a run', () => {
         expect(omitted2.has('local/small.txt')).toBe(false);
     });
 
+    it('folder files share the run\'s copy budget: past it a file is left out unless the code names it (commit review of 3376cb1, Codex)', async () => {
+        for (const k of Object.keys(live)) delete live[k];
+        live['local/a.txt'] = 'x'.repeat(60); live['local/b.txt'] = 'x'.repeat(60); live['local/named.txt'] = 'x'.repeat(60);
+        const files: Record<string, string> = {}, omitted = new Set<string>(), sizes = new Map<string, number>();
+        await addLiveFolderInput({ list: async () => Object.keys(live).map(name => ({ name, isLocal: true, size: 60 })), read, maxChars: 1000, put: (n, c) => { files[n] = c; }, snap: new Map(), omitted, sizes,
+            budget: { chars: 100, named: n => n === 'local/named.txt' } });
+        expect(Object.keys(files).sort()).toEqual(['local/a.txt', 'local/named.txt']);   // 60 fits in 100; the next 60 does not, except the one the code names
+        expect([...omitted]).toEqual(['local/b.txt']);
+        expect(sizes.get('local/b.txt')).toBe(60);
+    });
     it('hands over the size of each file it leaves out, for the run to list it with', async () => {
         for (const k of Object.keys(live)) delete live[k];
         live['local/big.txt'] = 'x'.repeat(2000); live['local/ok.txt'] = 'ok';

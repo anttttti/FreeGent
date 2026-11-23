@@ -165,7 +165,7 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
             if (name === null) { scratch.delete(abs); return; }
             delete files[name]; delete written[name];
             // Only a file the run was given is a deletion: one it created and removed again never reached the workspace (codex R193).
-            if (Object.prototype.hasOwnProperty.call(sent, name)) deleted.add(name);
+            if (Object.prototype.hasOwnProperty.call(sent, name) && !(name in left)) deleted.add(name);   // a left-out file the run wrote and then removed was never the run's to delete
         },
         rmSync(p: string, opts?: { recursive?: boolean; force?: boolean }) {
             if (get(p) !== undefined) return fs.unlinkSync(p);

@@ -10,6 +10,17 @@ export function execTimeoutMs(seconds: unknown): number {
     return Number.isFinite(n) && n > 0 ? Math.min(EXEC_TIMEOUT_MAX_MS, Math.max(1_000, Math.round(n * 1000))) : EXEC_TIMEOUT_MS;
 }
 
+/** Whether the code names this workspace file: by its path, or by its file name (4+ characters). */
+export function namesFile(code: string, name: string): boolean {
+    const base = name.slice(name.lastIndexOf('/') + 1);
+    return code.includes(name) || (base.length >= 4 && code.includes(base));
+}
+
+/** Why a run's deletion was refused: the file was left out of the run's copy, so the run did not see it and cannot have meant to delete it. */
+export function omittedFileDeleteMessage(path: string): string {
+    return `${path}: not deleted. The file was left out of the run's copy of the project, so the run did not see it. Delete it with delete_file if it should go.`;
+}
+
 /** Why a run's write was refused: the file it targets was left out of the run's copy of the workspace (over the file limit, or past the copy's total limit),
  *  so the run could not have seen its content and writing it would replace the original with whatever the run made. */
 export function omittedFileWriteMessage(path: string): string {
@@ -43,7 +54,7 @@ export function planWorkspaceCopy<T extends { name?: string; content?: unknown; 
         const len = r.content.length;
         if (len > maxFile) { omitted.set(r.name, sizeOf(r, len)); large.add(r.name); continue; }
         const base = r.name.slice(r.name.lastIndexOf('/') + 1);
-        cand.push({ r, len, named: code.includes(r.name) || (base.length >= 4 && code.includes(base)), sure: code.includes(r.name) });
+        cand.push({ r, len, named: namesFile(code, r.name), sure: code.includes(r.name) });
     }
     // A file named by its path is always sent. One named only by its file name is too, unless several files share that name: then the name does not say which is meant,
     // and sending them all past the budget (one path in the code pulled five 8 MB files of one name) would defeat it; they come first, within the budget (explorations W002).
@@ -114,12 +125,15 @@ export async function addLiveFolderInput(o: {
     put: (name: string, content: string) => void; snap: Map<string, string>; omitted: Set<string>; skip?: RegExp;
     /** Receives the size of each file left out, for the run to list it with. */
     sizes?: Map<string, number>;
+    /** The characters of the run's copy still free after the workspace's records: a folder file past it is left out unless the code names it (commit review of 3376cb1, Codex). */
+    budget?: { chars: number; named?: (name: string) => boolean };
 }): Promise<void> {
     for (const f of (await o.list()) || []) {
         if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
         let c: unknown;
         try { c = await o.read(f.name); } catch { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
-        if (typeof c === 'string' && c.length <= o.maxChars) { o.put(f.name, c); o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
+        const fits = !o.budget || o.budget.named?.(f.name) || (typeof c === 'string' && c.length <= o.budget.chars);
+        if (typeof c === 'string' && c.length <= o.maxChars && fits) { o.put(f.name, c); if (o.budget) o.budget.chars -= c.length; o.snap.set(f.name, wsRecordKey({ content: c })); o.omitted.delete(f.name); }
         else { o.omitted.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); }
     }
 }
