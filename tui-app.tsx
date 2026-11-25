@@ -1610,7 +1610,7 @@ async function handleSlash(cmd: string) {
         case '/skills': {   // the skills `/<skill>` can run, with their descriptions
             const list = [...((dom.window as any).skillsRegistry?.values?.() ?? [])] as any[];
             Store.addNotice(list.length
-                ? `_Skills: run one with \`/<name> [text]\`._\n${list.map(k => `- \`/${k.name}\` — ${k.description ?? ''}`).join('\n')}`
+                ? `_Skills: run one with \`/<name> [text]\`._\n${list.filter(k => !SLASH_COMMANDS.includes(`/${k.name}`)).map(k => `- \`/${k.name}\` — ${k.description ?? ''}`).join('\n')}`
                 : '_No skills are loaded._');
             break;
         }

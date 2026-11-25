@@ -397,7 +397,8 @@ async function gate_acceptance_review(taskPath, content) {
     // The task's own words, before its first section: terse criteria ("invalid input shows #error") mean what the description says. Judged without it, a working
     // form was refused four times as showing text "instead of #error" (kanbanflow set 2, multipage).
     const answers = typeof (globalThis as any).getRunnerUserAnswers === 'function' ? (globalThis as any).getRunnerUserAnswers(String(parseFrontmatter(content).title || '')).slice(-4) : [];
-    const desc = content.replace(/^---[\s\S]*?\n---[ \t]*\n?/, '').split(/^## /m)[0].replace(/^#[^\n]*\n/, '').trim().slice(0, 1200);
+    const descOf = (text: string) => text.replace(/^---[\s\S]*?\n---[ \t]*\n?/, '').split(/^## /m)[0].replace(/^#[^\n]*\n/, '').trim().slice(0, 1200);
+    const desc = descOf(content);
     const fileSec  = _mdSection(content, 'Files');
     let filePaths = fileSec
         ? [...fileSec.matchAll(/`([^`]+\.[a-z]{1,5})`/g)].map(m => m[1]).slice(0, 5)
@@ -406,7 +407,7 @@ async function gate_acceptance_review(taskPath, content) {
     // every criterion ("no code provided to inspect"). Fall back to source paths named in the log.
     if (!filePaths.length) {
         const found = [...content.matchAll(/\b((?:[\w.-]+\/)*[\w.-]+\.(?:js|ts|mjs|css|html|json|py))\b/g)].map(m => m[1]);
-        for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && filePaths.length < 5) filePaths.push(f);
+        for (const f of found) if (!filePaths.includes(f) && !/^fg-tasks\//.test(f) && !isScratchPath(f) && filePaths.length < 5) filePaths.push(f);   // a reproduction the log mentions is the agent's, not the product (review of 0e6582a)
     }
 
     // The other task files a criterion names are evidence too: a planning task's work is those files. Without them the reviewer judged
@@ -415,7 +416,9 @@ async function gate_acceptance_review(taskPath, content) {
     filePaths = filePaths.slice(0, 5);
     // A criterion that names a file (`test_calc.mjs`) is not met by a workspace without it. The reviewer cannot see that: "the code needed to decide is not
     // shown" reads as met (kanbanflow 2026-11-08: "Add tests" was done with no test file, twice).
-    const named = [...new Set([...criteria.matchAll(/`([\w][\w./-]*\.(?:js|mjs|ts|py|html|css|json))`/g)].map(m => m[1]))].filter(n => !/^fg-tasks\//.test(n));
+    // A criterion that removes, renames or forbids the file ("Remove `legacy.js`") needs the file gone, not present: the reviewer judges those (review of 20bf50b).
+    const _GONE = /\b(?:remov\w*|delet\w*|drop\w*|rename\w*|no longer|without|must not exist|not exist|absent|gone|deprecat\w*|obsolete|replace\w*|migrat\w*)\b/i;
+    const named = [...new Set(criteria.split('\n').filter(l => !_GONE.test(l)).flatMap(l => [...l.matchAll(/`([\w][\w./-]*\.(?:js|mjs|ts|py|html|css|json))`/g)].map(m => m[1])))].filter(n => !/^fg-tasks\//.test(n));
     if (named.length) {
         let have: string[] | null = null;
         try { have = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean); } catch {}
@@ -455,7 +458,7 @@ async function gate_acceptance_review(taskPath, content) {
         const criteriaNow = fresh == null ? null : (_mdSection(fresh, 'Acceptance', 'Acceptance Criteria') ?? '').trim();
         const statusNow   = fresh == null ? null : canonTaskStatus(parseFrontmatter(fresh).status);
         const codeNow     = (await gatherReviewCode(filePaths)).text;
-        if (criteriaNow !== criteria || statusNow !== canonTaskStatus(parseFrontmatter(content).status) || codeNow !== fileContents)
+        if (criteriaNow !== criteria || (fresh != null && descOf(fresh) !== desc) || statusNow !== canonTaskStatus(parseFrontmatter(content).status) || codeNow !== fileContents)
             return { blocks: false, outcome: 'stale', detail: 'The task or the code changed while the acceptance review was running, so its answer does not apply to what is there now. Run the transition again.' };
     }
 
@@ -632,6 +635,7 @@ async function gate_test_runner(taskPath, content) {
         if (res.exit_code !== 0) {
             const failed = [...output.matchAll(/FAILED:(.*)$/gm)].flatMap(m => m[1].trim().split(/\s+/)).filter(Boolean);
             const headers = [...output.matchAll(/^== .+ \(exit (\d+)\)$/gm)].map(m => m[1]);
+            if ((res.exit_code === 124 || res.exit_code === 137) && !failed.length) return { blocks: false, outcome: 'unknown', detail: `The tests did not finish within ${_QA_TEST_TIMEOUT_MS / 1000} s (the run was stopped)` };   // the executor's own timeout is not a failing test (review of 637e3e7)
             if (failed.length && headers.length >= failed.length && headers.every(h => h === '124' || h === '137'))
                 return { blocks: false, outcome: 'unknown', detail: `${failed.join(', ')} did not finish in ${_QA_FILE_TIMEOUT_S} s` };
             if (res.exit_code === 127 || _sandboxLacksAll(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
@@ -914,11 +918,12 @@ async function transitionTask(taskPath, toStatus) {
         _failChallenged.add(taskPath);
         return { transitioned: false, reason: `Not marked failed yet: the last check refused done with "${_lastBounce.get(taskPath)!.slice(0, 300)}". Fix that cause and set done again. If it cannot be fixed, set failed again with the reason.` };
     }
+    const wasInProgress = canonTaskStatus(parseFrontmatter(await agentReadFile(taskPath).catch(() => '')).status) === 'in-progress';
     const r = await _transitionTask(taskPath, toStatus);
     if (r.transitioned) { _lastBounce.delete(taskPath); _failChallenged.delete(taskPath); }
     else if (canonTaskStatus(toStatus) === 'done' && r.reason) _lastBounce.set(taskPath, r.reason);
     if (r.transitioned && canonTaskStatus(toStatus) === 'done') _gatesPassedDone.add(taskPath);
-    if (r.transitioned && canonTaskStatus(toStatus) === 'in-progress' && getQaEnabled()) await noteTaskStart(taskPath);   // for kept-features
+    if (r.transitioned && canonTaskStatus(toStatus) === 'in-progress' && getQaEnabled() && !(wasInProgress && _taskStartFiles.has(taskPath))) await noteTaskStart(taskPath);   // a repeated in-progress keeps the snapshot of the first one: it would otherwise include the files the task broke (review of 20bf50b);   // for kept-features
     return r;
 }
 

@@ -20,7 +20,7 @@ import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 
 const WRITE_TOOLS = new Set(WORKSPACE_WRITE_TOOLS);
 // Test runners, compilers and syntax checks. A script that merely ran is not a check.
-const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|(?:mvn|mvnw)\s+(?:-\S+\s+)*test|(?:gradle|gradlew)\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
+const CHECK_RE = /\b(?:pytest|py\.test|unittest|nosetests|tox|nox|manage\.py\s+test|npm\s+(?:run\s+)?(?:test|build)|yarn\s+(?:run\s+)?(?:test|build)|pnpm\s+(?:run\s+)?(?:test|build)|go\s+test|cargo\s+(?:test|check|build)|make\s+(?:test|check)|(?:mvn|mvnw)\s+(?:-\S+\s+)*test|(?:gradle|gradlew)\s+test|ctest|jest|vitest|rspec|phpunit|py_compile|compileall|node\s+--check|tsc\b|check_page)\b/;
 // A path that is a test, not the code under test: a tests/ or specs/ folder, test_x.py, x_test.go, x.test.ts.
 export const TEST_PATH_RE = /(^|\/)(tests?|testing|specs?)\/|(^|\/)test_|_test\.|\.test\./;
 // Collection and import failures of the environment, not of the code under test.
@@ -44,7 +44,7 @@ function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?:
     const r = call?.result;
     if (!call || !r || typeof r !== 'object' || (r.error && !(call.name === 'execute_code' && Array.isArray(r.files_written) && r.files_written.length))) return none;   // a command that timed out after writing still wrote (review of 7bd4d5d)
     if (WRITE_TOOLS.has(call.name)) {
-        const path = String(call.args?.path ?? call.result?.path ?? '');
+        const path = String(call.result?.path ?? call.args?.path ?? '');   // the tool's normalized path first: `/workspace/fg-tasks/001-x.md` is the task card (review of 6cd1c5b)
         const deleted = call.name === 'delete_file' || (call.name === 'undo_write' && /\bdeleted\b/i.test(String(r.note ?? '')));
         // A task file (fg-tasks/: the board's cards, ticked and logged as work goes) is the framework's bookkeeping: writing it after a
         // check did not change what was checked. Other files that look like bookkeeping (memory/, logs/) can be what the user asked for.

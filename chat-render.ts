@@ -722,7 +722,7 @@ function _addCodeBlockButtons(responseEl: HTMLElement): void {
                 const src = isJs
                     ? `<!DOCTYPE html><html><body><script>\n${codeEl.textContent}\n<\/script></body></html>`
                     : codeEl.textContent;
-                openArtifactTab?.('artifact.html', src);
+                openArtifactTab?.('artifact.html', src, { generated: true });
             };
         }
         pre.insertAdjacentElement('afterend', btn);

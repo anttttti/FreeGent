@@ -87,6 +87,23 @@ describe('acceptance review input', () => {
         expect((await W.transitionTask('fg-tasks/002-core.md', 'done')).transitioned).toBe(true);
     });
 
+    it('a criterion that removes a named file does not require it to exist (review of 20bf50b)', async () => {
+        files['calc.js'] = 'function calc(){}';
+        files['fg-tasks/002-core.md'] = task.replace('- [ ] canvas runs', '- [ ] Remove `legacy.js`');
+        W.callLLMComplete = vi.fn().mockResolvedValue('NO');
+        const r = await W.transitionTask('fg-tasks/002-core.md', 'done');
+        expect(r.reason ?? '').not.toMatch(/legacy\.js, which does not exist/);
+    });
+
+    it('a reproduction page only mentioned in the task log is not shown either (review of 0e6582a)', async () => {
+        files['index.html'] = '<body>ok</body>'; files['repro.html'] = '<div>the bug, on purpose</div>';
+        files['fg-tasks/002-core.md'] = task + '\n## Log\nreproduced in repro.html, fixed in index.html\n';
+        let prompt = ''; W.callLLMComplete = vi.fn().mockImplementation(async (m) => { prompt = JSON.stringify(m); return 'NO'; });
+        await W.transitionTask('fg-tasks/002-core.md', 'done');
+        expect(prompt).toContain('index.html');
+        expect(prompt).not.toContain('the bug, on purpose');
+    });
+
     it('does not show the reviewer the agent\'s own reproduction page (kanbanflow set 2: "repro.html is 400px wide" refused done nine times)', async () => {
         files['index.html'] = '<body style="margin:0">ok</body>';
         files['repro.html'] = '<div style="width:400px">the bug, on purpose</div>';

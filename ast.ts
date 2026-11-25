@@ -95,19 +95,22 @@ function _astQueryJS({ content, lineOf, results, wantFn, wantCls, wantImp, wantE
     _astCallsAndRefs({ content, lineOf, results, callMatch, refMatch });
 }
 
+// Triple-quoted strings (docstrings, test fixtures) blanked, newlines kept: a `def` inside one is text, not a definition (review of 3dcee09).
+const _pyMaskStrings = (src: string): string => src.replace(/('''|""")[\s\S]*?(?:\1|$)/g, t => t.replace(/[^\n]/g, ' '));
 function _astQueryPython({ content, lineOf, results, wantFn, wantCls, wantImp, callMatch, refMatch }: AstCtx): void {
     let m: RegExpExecArray | null;
+    const code = _pyMaskStrings(content);
     if (wantFn) {
         const fn = /^[ \t]*(?:async\s+)?def\s+(\w+)\s*\(/gm;   // indented ones are methods: ast_query must list them too
-        while ((m = fn.exec(content)) !== null) results.push({ name: m[1], type: 'function', line: lineOf(m.index) });
+        while ((m = fn.exec(code)) !== null) results.push({ name: m[1], type: 'function', line: lineOf(m.index) });
     }
     if (wantCls) {
         const cls = /^class\s+(\w+)/gm;
-        while ((m = cls.exec(content)) !== null) results.push({ name: m[1], type: 'class', line: lineOf(m.index) });
+        while ((m = cls.exec(code)) !== null) results.push({ name: m[1], type: 'class', line: lineOf(m.index) });
     }
     if (wantImp) {
         const imp1 = /^import\s+[\w,.\s]+/gm;
-        while ((m = imp1.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
+        while ((m = imp1.exec(code)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
         const imp2 = /^from\s+\S+\s+import\s+.+/gm;
         while ((m = imp2.exec(content)) !== null) results.push({ name: m[0].trim(), type: 'import', line: lineOf(m.index) });
     }
@@ -312,8 +315,17 @@ function _astQueryContent(content, lang, query) {
         const all = _astQueryContent(content, lang, 'symbols')
             .filter(s => s.type === 'function' || s.type === 'method' || s.type === 'class');
         let best: any = null;
+        const lines = lang === 'python' ? _pyMaskStrings(content).split('\n') : null;
+        // Python: a definition ends where the next non-blank line is indented no deeper than its own, so a class-level assignment after a method is not "in" the method (review of 3dcee09).
+        const endOf = (s: any): number => {
+            if (!lines) return Infinity;
+            const indent = (lines[s.line - 1].match(/^[ \t]*/) ?? [''])[0].length;
+            let end = s.line;
+            for (let i = s.line; i < lines.length; i++) { if (!lines[i].trim()) continue; if ((lines[i].match(/^[ \t]*/) ?? [''])[0].length <= indent) break; end = i + 1; }
+            return end;
+        };
         for (const s of all) {
-            if (s.line <= lineAt && (!best || s.line > best.line)) best = s;
+            if (s.line <= lineAt && lineAt <= endOf(s) && (!best || s.line > best.line)) best = s;
         }
         return best ? [best] : [];
     }

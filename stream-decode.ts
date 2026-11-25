@@ -413,7 +413,12 @@ export async function streamOAICompat(resp: any, onChunk: any) {
     for (const tc of tool_calls) {
         const rawName = tc.function.name || '';
         // Strip trailing XML/Qwen artifacts: ___function, </function>, </function_calls>, etc.
-        const cleanName = rawName.replace(/\s*(?:\)\s*)?<\/function[^>]*>$/, ')').replace(/\s*___function[^(]*$/, '');
+        // Linear: the suffix is found first and the whitespace before it trimmed after, so a name made of thousands of spaces cannot make the engine retry from every one (review of 4d7afa8).
+        let cleanName = rawName;
+        const closeAt = cleanName.search(/<\/function[^>]*>$/);
+        if (closeAt >= 0) { let pre = cleanName.slice(0, closeAt).trimEnd(); if (pre.endsWith(')')) pre = pre.slice(0, -1).trimEnd(); cleanName = pre + ')'; }
+        const sufAt = cleanName.search(/___function[^(]*$/);
+        if (sufAt >= 0) cleanName = cleanName.slice(0, sufAt).trimEnd();
         // If the name contains embedded args like `tool_name(key=val, ...)`, extract them.
         const parenIdx = cleanName.indexOf('(');
         if (parenIdx !== -1) {

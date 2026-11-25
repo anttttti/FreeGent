@@ -23,6 +23,14 @@ export interface FsDeps {
 }
 
 
+// A file the preload left unread keeps its metadata when it is renamed: the old name goes, the new one is listed with the same size (review of 20eec12).
+function moveSkippedMeta(fileMtimes: Map<string, number>, fileCache: Map<string, string>, oldRes: string, newRes: string): void {
+  if (fileCache.has(oldRes) || !fileMtimes.has(oldRes)) return;
+  const sk = skippedSizes(fileMtimes), size = sk.get(oldRes);
+  if (size === undefined) return;
+  fileMtimes.delete(oldRes); sk.delete(oldRes);
+  fileMtimes.set(newRes, Date.now()); sk.set(newRes, size);
+}
 function createRemovalHelpers(
   ctx: CommandContext,
   fileCache: Map<string, string>,
@@ -42,7 +50,7 @@ function createRemovalHelpers(
     const now = Date.now();
     if (recursive) {
       const prefix = resolved.endsWith('/') ? resolved : resolved + '/';
-      for (const key of [...fileCache.keys()]) {
+      for (const key of new Set([...fileCache.keys(), ...fileMtimes.keys()])) {   // files the preload listed without reading are known by their timestamp only (review of 20eec12)
         if (key !== resolved && !key.startsWith(prefix)) continue;
         if (isProtectedRecentTaskOutput(key, now)) continue;
         fileCache.delete(key);
@@ -103,6 +111,7 @@ export function createFsModule(deps: FsDeps): any {
   const { removePathFromCaches } = createRemovalHelpers(ctx, fileCache, fileMtimes);
   // Files the preload listed without reading (binary, or past its budget): present for stat and readdir, with their real size, until written or removed.
   const skippedSize = (p: string): number | undefined => (fileCache.has(p) || !fileMtimes.has(p)) ? undefined : skippedSizes(fileMtimes).get(p);
+  const moveSkipped = (oldRes: string, newRes: string): void => moveSkippedMeta(fileMtimes, fileCache, oldRes, newRes);
   const cachedKeys = (): Iterable<string> => {
     const sk = skippedSizes(fileMtimes);
     return sk.size ? [...fileCache.keys(), ...[...sk.keys()].filter(k => skippedSize(k) !== undefined)] : fileCache.keys();
@@ -133,6 +142,8 @@ export function createFsModule(deps: FsDeps): any {
         if (cached !== undefined) fileCache.set(resolved, cached); // promote to fileCache
       }
       if (cached === undefined) {
+          // Listed but not read (binary, or past the preload budget): present for existsSync, so not ENOENT (review of 20eec12).
+          if (skippedSize(resolved) !== undefined) throw fsError('EIO', `EIO: i/o error, '${p}' was not read into this run (binary or past the preload budget). Read it with bash (cat, base64) instead.`, 'open', p);
           throw fsError('ENOENT', `ENOENT: no such file or directory, open '${p}'`, 'open', p);
       }
       return asRead(cached, encodingOf(opts));
@@ -353,6 +364,7 @@ export function createFsModule(deps: FsDeps): any {
           fileCache.set(newRes, fsCached);
           fileMtimes.set(newRes, Date.now());
         }
+        moveSkipped(oldRes, newRes);
         pendingPromises.push(queueFsOperation(pendingPromises, () => ctx.fs.rename(oldRes, newRes)));
       }
     },
@@ -1166,7 +1178,7 @@ export function createFsPromisesModule(deps: FsDeps): any {
         fileCache.delete(oldRes);
         fileMtimes.set(newRes, Date.now());
         fileMtimes.delete(oldRes);
-      }
+      } else moveSkippedMeta(fileMtimes, fileCache, oldRes, newRes);
       await ctx.fs.rename(oldRes, newRes);
     },
     copyFile: async (src: string, dst: string) => {

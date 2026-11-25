@@ -64,6 +64,9 @@ describe('languages loaded on demand', () => {
         const { _lazyLanguageOf } = await import('../editor.ts');
         expect(_lazyLanguageOf('a/config.yml')).toEqual({ pkg: 'lang-yaml', fn: 'yaml' });
         expect(_lazyLanguageOf('q.SQL')).toEqual({ pkg: 'lang-sql', fn: 'sql' });
+        expect(_lazyLanguageOf('sql')).toBeNull();                 // no extension (review of 2287122)
+        expect(_lazyLanguageOf('notes.constructor')).toBeNull();   // not Object.prototype's
+        expect(_lazyLanguageOf('x.hxx')).toEqual({ pkg: 'lang-cpp', fn: 'cpp' });
         expect(_lazyLanguageOf('main.cpp')).toEqual({ pkg: 'lang-cpp', fn: 'cpp' });
         expect(_lazyLanguageOf('main.rs')).toEqual({ pkg: 'lang-rust', fn: 'rust' });
         expect(_lazyLanguageOf('run.sh')).toEqual({ legacy: 'shell', fn: 'shell' });

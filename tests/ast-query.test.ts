@@ -26,3 +26,14 @@ describe('ast_query', () => {
         expect(fmt([], 'functions')).toBe('No functions found in f.');
     });
 });
+
+describe('ast_query on Python (review of 3dcee09)', () => {
+    const src = "class A:\n    def m(self):\n        return 1\n    X = 5\n\ndef f():\n    s = '''\n    def fake():\n        pass\n    '''\n    return s\n";
+    it('symbol_at on a class-level assignment after a method is the class, not the method', () => {
+        expect(q(src, 'python', 'symbol_at:4').map((r: any) => r.name)).toEqual(['A']);
+        expect(q(src, 'python', 'symbol_at:3').map((r: any) => r.name)).toEqual(['m']);
+    });
+    it('a def inside a triple-quoted string is not a function', () => {
+        expect(q(src, 'python', 'functions').map((r: any) => r.name)).toEqual(['m', 'f']);
+    });
+});

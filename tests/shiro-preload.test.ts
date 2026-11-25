@@ -73,9 +73,27 @@ describe('files listed without being read', () => {
         const { fileCache, fileMtimes } = createFileCache();
         await preloadDir(ctx as any, fileCache, fileMtimes, '/w', 0, 3);
         const fsm: any = createFsModule({ ctx, fileCache, fileMtimes, pendingPromises: [], tickSyncOps() {}, FakeBuffer: createFakeBuffer(), getBuiltinModule: () => ({}), homeDir: '/home' } as any);
+        expect(() => fsm.readFileSync('/w/icon.png')).toThrow(/not read into this run/);   // not ENOENT: existsSync says it is there
         expect(() => fsm.appendFileSync('/w/icon.png', 'more')).toThrow(/not read into this run/);
         expect(written).toEqual([]);
         fsm.appendFileSync('/w/a.txt', ' world');
         expect(fileCache.get('/w/a.txt')).toBe('hello world');
+    });
+
+    it('renaming and recursively removing them keep stat/readdir right (review of 20eec12)', async () => {
+        const { createFileCache } = await import('../shiro/node-compat/file-cache');
+        const { createFsModule } = await import('../shiro/node-compat/modules/fs');
+        const { createFakeBuffer } = await import('../shiro/node-compat/buffer');
+        const ctx = fakeCtx({ '/w/a.txt': 'hello', '/w/icon.png': 'x'.repeat(40), '/w/d/b.png': 'y'.repeat(9) }, []);
+        Object.assign(ctx.fs, { resolvePath: (p: string) => p, readCached: () => undefined, readdirCached: () => undefined, mkdir: async () => {}, writeFile: async () => {}, rename: async () => {}, unlink: async () => {} });
+        ctx.cwd = '/w';
+        const { fileCache, fileMtimes } = createFileCache();
+        await preloadDir(ctx as any, fileCache, fileMtimes, '/w', 0, 3);
+        const fsm: any = createFsModule({ ctx, fileCache, fileMtimes, pendingPromises: [], tickSyncOps() {}, FakeBuffer: createFakeBuffer(), getBuiltinModule: () => ({}), homeDir: '/home' } as any);
+        fsm.renameSync('/w/icon.png', '/w/new.png');
+        expect(fsm.existsSync('/w/icon.png')).toBe(false);
+        expect(fsm.statSync('/w/new.png').size).toBe(40);
+        fsm.rmSync('/w/d', { recursive: true });
+        expect(fsm.existsSync('/w/d/b.png')).toBe(false);
     });
 });

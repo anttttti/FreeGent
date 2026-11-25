@@ -468,6 +468,15 @@ function openFileTab(name) {
             },
         });
 
+        // The tab was closed while the editor (and its language pack) loaded: the view would live on in a detached panel, and the close handler never saw it (review of 2287122).
+        if (fileTabs.get(name) !== ft) { try { ft.editor?.destroy?.(); } catch {} ft.editor = null; return; }
+        // The file changed on disk meanwhile and there was no editor to tell: it opens with what is there now.
+        if (ft.editor && typeof ft._latestOnDisk === 'string' && ft._latestOnDisk !== content) {
+            setEditorContent(ft.editor, ft._latestOnDisk);
+            ft.savedContent = ft._latestOnDisk;
+        }
+        ft._latestOnDisk = undefined;
+
         if (!ft.editor) {
             // createEditor fell back to <pre> — hide save button
             saveBtn.style.display = 'none';
@@ -770,7 +779,7 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
     // 3. CORS proxy — relays cross-origin GET requests to this page (_relayPreviewFetch), which
     //    fetches them through the FG proxy, so agent-written HTML apps can fetch external APIs
     //    without CORS errors and without hardcoding 3rd-party proxies.
-    const mapJson = JSON.stringify(assetMap);
+    const mapJson = JSON.stringify(Object.fromEntries(Object.keys(assetMap).sort().map(k => [k, assetMap[k]])));   // reads finish in any order; the page text, and so its crash fingerprint, must not depend on it (review of 51c9010)
     const _proxyUrl = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
     const shimTag = `<script>
 (function(){
@@ -1317,7 +1326,7 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
 // title is the page's workspace path when it is a workspace file; its references resolve from there.
 // Each rebuild of an open preview takes a number; only the newest may write its result, whatever order the asynchronous reads finish in (codex R346).
 let _artifactSeq = 0;
-async function openArtifactTab(title, html, { isPreview = true } = {}) {
+async function openArtifactTab(title, html, { isPreview = true, generated = false } = {}) {   // generated: a snippet from the chat, whatever file its title names
     const deps = new Set<string>();
     const key = `artifact:${title}`;
     const open = fileTabs.get(key);
@@ -1362,7 +1371,7 @@ async function openArtifactTab(title, html, { isPreview = true } = {}) {
     editBtn.style.display = 'none';
     editBtn.onclick = () => openFileTab(title);
     panel.appendChild(editBtn);
-    Promise.resolve(agentReadFile(title)).then(() => { editBtn.style.display = ''; }, () => {});
+    if (!generated) Promise.resolve(agentReadFile(title)).then(() => { editBtn.style.display = ''; }, () => {});   // a chat snippet called artifact.html is not the project's artifact.html (review of 491d6d5)
     document.getElementById('tab-content').appendChild(panel);
 
     fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview, deps });
@@ -1485,6 +1494,7 @@ function notifyLocalFileChanged(fullPath, content) {
     scheduleArtifactRefresh(fullPath);   // a preview of a Local Folder page is keyed by its local/ path, so the notice keeps it (codex R406)
     const ft = fileTabs.get(fullPath);
     if (!ft) return;
+    if (!ft.editor && !ft.isPreview && typeof content === 'string') ft._latestOnDisk = content;   // an editor still loading picks it up when it mounts
     if (ft.editor) {
         // One policy for every source (agent, another tab, the connected folder): unsaved text stays, and the tab says the file changed underneath.
         if (!_sameText(ft.editor.state.doc.toString(), ft.savedContent)) {

@@ -71,13 +71,19 @@ const _LAZY_BY_EXT: Record<string, LazyLang> = {
     sql: { pkg: 'lang-sql', fn: 'sql' },
     xml: { pkg: 'lang-xml', fn: 'xml' }, svg: { pkg: 'lang-xml', fn: 'xml' }, xsl: { pkg: 'lang-xml', fn: 'xml' }, xsd: { pkg: 'lang-xml', fn: 'xml' },
     c: { pkg: 'lang-cpp', fn: 'cpp' }, h: { pkg: 'lang-cpp', fn: 'cpp' }, cc: { pkg: 'lang-cpp', fn: 'cpp' }, cpp: { pkg: 'lang-cpp', fn: 'cpp' },
-    cxx: { pkg: 'lang-cpp', fn: 'cpp' }, hpp: { pkg: 'lang-cpp', fn: 'cpp' }, hh: { pkg: 'lang-cpp', fn: 'cpp' },
+    cxx: { pkg: 'lang-cpp', fn: 'cpp' }, hxx: { pkg: 'lang-cpp', fn: 'cpp' }, hpp: { pkg: 'lang-cpp', fn: 'cpp' }, hh: { pkg: 'lang-cpp', fn: 'cpp' },
     java: { pkg: 'lang-java', fn: 'java' },
     go: { pkg: 'lang-go', fn: 'go' },
     rs: { pkg: 'lang-rust', fn: 'rust' },
     sh: { legacy: 'shell', fn: 'shell' }, bash: { legacy: 'shell', fn: 'shell' }, zsh: { legacy: 'shell', fn: 'shell' },
 };
-export const _lazyLanguageOf = (filename: string): LazyLang | null => _LAZY_BY_EXT[(filename.split('.').pop() || '').toLowerCase()] ?? null;
+// An extension needs a dot (a file called `sql` has none), and an own entry (`notes.constructor` must not find Object.prototype's) (review of 2287122).
+export const _lazyLanguageOf = (filename: string): LazyLang | null => {
+    const base = filename.split('/').pop() || '';
+    const i = base.lastIndexOf('.');
+    const ext = i > 0 || (i === 0 && base.length > 1) ? base.slice(i + 1).toLowerCase() : '';
+    return ext && Object.prototype.hasOwnProperty.call(_LAZY_BY_EXT, ext) ? _LAZY_BY_EXT[ext] : null;
+};
 
 const _lazyCache = new Map<string, Promise<any>>();
 /** The language extension for a lazily loaded type, or null when its pack cannot be had. `importer` is the module loader (replaced in tests). */

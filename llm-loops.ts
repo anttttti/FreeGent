@@ -211,7 +211,7 @@ const _rotState = { step: 0 };
 export function clearSessionFallback(): void { _sessionFallback = null; }
 // What a crash note says ran: the tool's label, and for code its first line.
 function _crashLabel(name: string, args: any): string {
-    const code = name === 'execute_code' && typeof args?.code === 'string' ? args.code.split('\n').find((l: string) => l.trim())?.trim().slice(0, 100) : '';
+    const code = name === 'execute_code' && typeof args?.code === 'string' ? args.code.split('\n').find((l: string) => l.trim())?.trim().slice(0, 400) : '';   // cut after redaction, at 200 (a token across a 100-character cut kept its prefix: review of 51c9010)
     return `${toolLabel(name, args)}${code ? `: ${code}` : ''}`;
 }
 
@@ -1519,9 +1519,9 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
                 isScratchPath, brokenFiles: brokenFileReport, shellCommands: _shellCmds,
                 planning: typeof getMode === 'function' && getMode() === 'cowork' && (() => { const calls = _histR(_s).flatMap((m: any) => m.tool_calls || []); return calls.some(writesTaskFile); })(),
-                noCriteria: async () => { const out: string[] = []; for (const f of await agentListFiles().catch(() => [])) { const p = f.name; if (/^fg-tasks\/\d+-/.test(p)) { try { if (lacksCriteria(await agentReadFile(p))) out.push(p); } catch {} } } return out; },
-                taskText: async () => { try { let t = ''; for (const f of await agentListFiles()) if (/^fg-tasks\/\d+-/.test(f.name)) t += (await agentReadFile(f.name)).toLowerCase() + '\n'; return t; } catch { return ''; } },
-                taskIds: async () => typeof getMode !== 'function' || getMode() !== 'cowork' ? null : new Set((typeof agentListFiles === 'function' ? await agentListFiles().catch(() => []) : []).map((f: any) => /^fg-tasks\/0*(\d+)-/.exec(f.name)?.[1]).filter(Boolean) as string[]),
+                noCriteria: async () => { const out: string[] = []; for (const f of await agentListFiles().catch(() => [])) { const p = f.name; if (/^(?:local\/)?fg-tasks\/\d+-/.test(p)) { try { if (lacksCriteria(await agentReadFile(p))) out.push(p); } catch {} } } return out; },
+                taskText: async () => { try { let t = ''; for (const f of await agentListFiles()) if (/^(?:local\/)?fg-tasks\/\d+-/.test(f.name)) t += (await agentReadFile(f.name)).toLowerCase() + '\n'; return t; } catch { return ''; } },
+                taskIds: async () => typeof getMode !== 'function' || getMode() !== 'cowork' ? null : new Set((typeof agentListFiles === 'function' ? await agentListFiles().catch(() => []) : []).map((f: any) => /^(?:local\/)?fg-tasks\/0*(\d+)-/.exec(f.name)?.[1]).filter(Boolean) as string[]),
             });
             if (_gate) {
                 if (!_BLOCKED_DECLARATION_RE.test(textContent)) _saveAnswer(ps, textContent);   // a bounced BLOCKED is not an answer

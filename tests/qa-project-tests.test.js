@@ -125,6 +125,12 @@ describe('test-runner gate', () => {
         W.executeToolAsync = async () => ({ stdout: "== test_dark.js (exit 1)\nError: Cannot find module './helpers.js'\nFAILED: test_dark.js\n", stderr: '', exit_code: 1 });
         expect((await W.transitionTask(t2, 'done')).transitioned).toBe(false);
     });
+    it('a run the executor stopped at its time limit (exit 124, no failing test) is unverified, not a failure (review of 637e3e7)', async () => {
+        files['test_slow.js'] = 'x';
+        W.executeToolAsync = async () => ({ stdout: 'running…\n', stderr: '', exit_code: 124, error: 'timed out' });
+        const r = await W.transitionTask(TASK, 'done');
+        expect(r.transitioned).toBe(true);
+    });
     it('a missing project entry point (test/runner.js) is a failure, not a missing package (review of 0e6582a)', async () => {
         files['test_x.js'] = 'x';
         W.executeToolAsync = async () => ({ stdout: "== test_x.js (exit 1)\nnode: Cannot find module 'test/runner.js'\nFAILED: test_x.js\n", stderr: '', exit_code: 1 });

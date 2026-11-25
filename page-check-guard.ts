@@ -54,9 +54,9 @@ export function beginPageCheck(path: string, content: string, chatId: string | n
 /** What the check is doing now, and/or one console line from the page. */
 export function notePageCheck({ stage, line }: { stage?: string; line?: string }): void {
     if (!_cur) return;
-    if (stage) _cur.stage = redactForLog(String(stage).slice(0, 400)).slice(0, 300);   // a stage can hold what the check typed or evaluated
+    if (stage) _cur.stage = redactForLog(String(stage).slice(0, 4000)).slice(0, 300);   // a stage can hold what the check typed or evaluated
     // Redacted now: after a reload a locked key vault no longer gives the values to redact them with.
-    if (line) _cur.lines = [..._cur.lines, redactForLog(String(line).slice(0, 400)).slice(0, 200)].slice(-LINES);
+    if (line) _cur.lines = [..._cur.lines, redactForLog(String(line).slice(0, 4000)).slice(0, 200)].slice(-LINES);
     _cur.beat = Date.now();
     _write();
 }
@@ -79,7 +79,7 @@ export function crashedBefore(path: string, content: string): PageCheckCrash | n
 
 /** A check that took its separate check window down (the tab and the chats lived): recorded like a tab crash, so the unchanged page is not loaded again. */
 export function recordIsolatedPageCrash(path: string, content: string, info: { chatId: string | null; t: number; beat: number; stage: string; lines: string[] }): PageCheckCrash {
-    const clean = (x: string, n: number) => redactForLog(String(x).slice(0, 400)).slice(0, n);   // stored for good: a credential saved in Settings must not outlive its lock
+    const clean = (x: string, n: number) => redactForLog(String(x).slice(0, 4000)).slice(0, n);   // stored for good: a credential saved in Settings must not outlive its lock
     const m: PageCheckCrash = { path, hash: hashContent(content), chatId: info.chatId, session: SESSION_ID, version: FG_VERSION, t: info.t, beat: info.beat, stage: clean(info.stage, 300),
         lines: info.lines.slice(-LINES).map(l => clean(l, 200)), runner: _isRunner(), told: true };   // told: the check's own answer carries it
     _save([..._crashed().filter(c => !(c.path === path && c.hash === m.hash)), m]);
@@ -140,7 +140,7 @@ function _writeCalls(beat = Date.now()): void {
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
 export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number; scripts?: string[] }): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 400)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts } : {}) } : {}) });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 4000)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts } : {}) } : {}) });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();

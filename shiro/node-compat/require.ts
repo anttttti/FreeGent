@@ -7,6 +7,7 @@
 import type { CommandContext } from '../commands/index';
 import { transformESModules, transformTS, transformJSX } from '../commands/jseval/module-transform';
 import { ProcessExitError } from '../commands/jseval/utils';
+import { skippedSizes } from './file-cache';
 
 export interface RequireDeps {
   ctx: CommandContext;
@@ -342,6 +343,9 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
 
     const content = fileCache.get(resolved);
     if (content === undefined) {
+      // The file is there but was listed without being read (past the preload budget, or binary): say that, not "Cannot find module" (review of 20eec12).
+      if (skippedSizes(fileMtimes).has(resolved) && fileMtimes.has(resolved))
+        throw Object.assign(new Error(`Module '${modPath}' exists (${resolved}) but was not loaded into this run: the project is larger than the preload budget. Run it with a shorter path set (cd into the project folder), or use bash.`), { code: 'ERR_MODULE_NOT_PRELOADED' });
       // Show helpful debug info
       const nearby = [...fileCache.keys()]
         .filter(k => k.includes(modPath.replace(/^\.\.?\//g, '').replace(/\.js$/, '')))

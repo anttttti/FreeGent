@@ -135,6 +135,10 @@ describe('a check that ran no test', () => {
     it('a command that timed out after writing a file is still a change (review of 7bd4d5d)', () => {
         expect(run([[code('python3 slow.py', { error: 'timed out', exit_code: 124, stdout: '', files_written: ['src/out.py'] })]])).toBe('unverified');
     });
+    it('npm run build is a check (review of 6cd1c5b)', () => {
+        expect(run([[edit], [code('npm run build', { exit_code: 0, stdout: 'built in 2s' })]])).toBe('verified');
+        expect(run([[edit], [code('npm run build', { exit_code: 1, stdout: 'error' })]])).toBe('failed_verification');
+    });
     it('vitest list and jest --listTests discover tests, they do not run them (R977)', () => {
         expect(run([[edit], [code('npx jest list.test.js', { exit_code: 0, stdout: 'PASS list.test.js' })]]), 'a test file named list is run').toBe('verified');   // review of 7116993
         for (const c of ['npx vitest list', 'npx jest --listTests']) expect(run([[edit], [code(c, { exit_code: 0, stdout: 'tests/a.test.ts' })]]), c).toBe('unverified');

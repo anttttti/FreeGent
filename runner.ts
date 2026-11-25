@@ -404,7 +404,7 @@ function _leftOpen(tasks: Task[]): string {
     const blocked = by(['blocked']), failed = by(['failed']);
     const deferred = scope.filter(t => _runnerDeferred.has(t.path) && !blocked.includes(t) && !failed.includes(t) && canonTaskStatus(t.fm.status) !== 'done');
     // Open tasks whose dependencies did not finish (failed, blocked, missing): never started, named so the user sees why.
-    const waiting = scope.filter(t => ['todo', 'open'].includes(canonTaskStatus(t.fm.status)) && !_runnerDeferred.has(t.path) && _unmetDeps(t, tasks).length);
+    const waiting = scope.filter(t => ['todo', 'open', 'in-progress', 'in-review', 'review'].includes(canonTaskStatus(t.fm.status)) && !_runnerDeferred.has(t.path) && _unmetDeps(t, tasks).length);
     const parts = [
         blocked.length  ? `${blocked.length} blocked (${blocked.map(label).join(', ')}): answer in the task's chat or edit it, then run it again` : '',
         failed.length   ? `${failed.length} failed (${failed.map(label).join(', ')})` : '',
