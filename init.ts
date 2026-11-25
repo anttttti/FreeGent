@@ -556,7 +556,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (_crashedChat && _crashedChat === activeChatId && !(window as any).isRunnerRunning?.() && spendAutoRecovery('fg_chat_autocontinue')) {
         setTimeout(() => {
             const inp = document.getElementById('agent-input') as HTMLElement | null;
-            if (!inp || (window as any).turnsInFlight?.() > 0 || ((window as any)._readInputText?.(inp) || '').trim()) return;   // the user is already typing or a turn is running
+            if (!inp || activeChatId !== _crashedChat || (window as any).turnsInFlight?.() > 0 || ((window as any)._readInputText?.(inp) || '').trim()) return;   // the user is already typing, a turn is running, or another chat was opened in the 2.5 s (review of b0c3c0f)
             (window as any)._setInputText?.(inp, 'Continue');
             (window as any).userSend?.();
         }, 2500);

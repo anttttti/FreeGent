@@ -744,7 +744,13 @@ async function gate_kept_data(taskPath) {
     const before = _taskStartData.get(taskPath);
     if (!before?.size) return { blocks: false };
     const now = await _projectData();
-    const changed = [...before].filter(([n, t]) => now.has(n) && now.get(n) !== t);
+    // A recorded file that is not in the new sample was deleted, grew past the size limit or fell out of the 40-file cut: read it itself (review of dde5141).
+    const changed: [string, string][] = [];
+    for (const [n, t] of before) {
+        let cur: any = now.get(n);
+        if (cur === undefined) { try { cur = await agentReadFile(n); } catch { cur = undefined; } }
+        if (typeof cur !== 'string' || cur !== t) changed.push([n, t]);
+    }
     if (!changed.length) return { blocks: false };
     const names = changed.map(([n]) => n).join(', ');
     if (_bouncedBefore(taskPath, 'kept-data', names))

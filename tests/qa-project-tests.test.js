@@ -444,8 +444,18 @@ describe('kept-data gate', () => {
         expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
     });
 
+    it('bounces a done that deleted an input data file (review of dde5141)', async () => {
+        Object.assign(files, { [T]: task3('todo'), 'data/events.csv': 'real line 1\n' });
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        delete files['data/events.csv']; files['out/report.json'] = '{}';
+        const first = await W.transitionTask(T, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/data\/events\.csv/);
+    });
+
     it('says nothing when the data files are as they were or only new ones appeared', async () => {
-        Object.assign(files, { [T]: task3('todo'), 'data/app.log': 'real\n' });
+        Object.assign(files, { [T]: task3('todo'), 'data/events.csv': 'real\n' });
         delete files[TASK];
         await W.transitionTask(T, 'in-progress');
         files['out/report.json'] = '{}';
