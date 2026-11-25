@@ -373,7 +373,9 @@ const _USER_TASK_RE = /\b(?:users?|accounts?|groups?|useradd|adduser|sudoers?\.d
 export function testFixtures(task: string, commands: string[]): string[] {
     if (_USER_TASK_RE.test(task)) return [];
     const made = new Map<string, 'user' | 'group'>(), files: Array<{ path: string; line: string }> = [];
-    for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
+    // A heredoc body is part of the command that opens it: `cat > /etc/sudoers.d/90-test <<EOF` and the rule on the next line are one write (review of 808820d).
+    const joined = (cmd: string) => String(cmd).replace(/(<<-?\s*['"]?(\w+)['"]?)[ \t]*\n([\s\S]*?)\n[ \t]*\2\b/g, (_m, open, _t, body) => `${open} ${String(body).replace(/\n/g, ' ')}`);
+    for (const cmd of commands) for (const line of joined(cmd).split(/\n|&&|;/)) {
         const u = /\b(useradd|adduser|groupadd)\s+(?:-\S+\s+(?:\S+\s+)?)*([A-Za-z_][\w.-]*)\s*$/.exec(line);
         if (u) made.set(u[2], u[1] === 'groupadd' ? 'group' : 'user');   // a group is reported as a group (review of 808820d)
         const f = />>?\s*(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line) || /\btee\s+(?:-a\s+)?(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line);

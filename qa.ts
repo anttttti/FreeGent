@@ -3,7 +3,7 @@
 
 
 import { canonTaskStatus, TASK_DIRS, isScratchTask, taskIdOf, taskRootOf } from './task-status.js';
-import { isScratchPath, rootPageOf } from './detectors.js';
+import { isScratchPath, rootPageOf, _fpHash } from './detectors.js';
 import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './frontmatter.js';
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
@@ -774,15 +774,16 @@ async function gate_kept_data(taskPath) {
     if (!before?.size) return { blocks: false };
     const now = await _projectData();
     // A recorded file that is not in the new sample was deleted, grew past the size limit or fell out of the 40-file cut: read it itself (review of dde5141).
-    const changed: [string, string][] = [];
+    const changed: [string, string][] = [], contentSig: string[] = [];
     for (const [n, t] of before) {
         let cur: any = now.get(n);
         if (cur === undefined) { try { cur = await agentReadFile(n); } catch { cur = undefined; } }
-        if (typeof cur !== 'string' || cur !== t) changed.push([n, t]);
+        if (typeof cur !== 'string' || cur !== t) { changed.push([n, t]); contentSig.push(`${n}:${typeof cur === 'string' ? _fpHash(cur) : 'gone'}`); }
     }
     if (!changed.length) return { blocks: false };
     const names = changed.map(([n]) => n).join(', ');
-    if (_bouncedBefore(taskPath, 'kept-data', names))
+    // The retry is bound to what the files hold now: the same names rewritten with other wrong data is a new attempt, not the one the person was told about (review of dde5141).
+    if (_bouncedBefore(taskPath, 'kept-data', `${names}|${contentSig.join(',')}`))
         return { blocks: false, outcome: 'unknown', detail: `Changed data files that existed before the task (accepted on the second attempt): ${names.slice(0, 200)}` };
     const [n0, t0] = changed[0];
     const orig = t0.length <= 1500 ? `Its content when the task started:\n${t0}` : `It began: ${t0.slice(0, 600)}`;

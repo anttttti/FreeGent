@@ -111,6 +111,10 @@ describe('test fixtures left in the system', () => {
         expect(hit?.text).toMatch(/user ops/);
         expect(hit?.text).not.toMatch(/10-devops/);
     });
+    it('a sudoers rule written by a heredoc is attributed to its file (review of 808820d)', async () => {
+        const hit = await runCompletionGates(ctx({ task: "Why can't I use sudo?? fix it.", shellCommands: ['useradd tmpuser', 'cat > /etc/sudoers.d/90-test <<EOF\ntmpuser ALL=(ALL) ALL\nEOF'] }));
+        expect(hit?.text).toMatch(/\/etc\/sudoers\.d\/90-test/);
+    });
     it('is silent when the task is about users', async () => {
         expect(await runCompletionGates(ctx({ task: 'Create a user alice and let her use sudo.', shellCommands: ['useradd alice'] }))).toBeNull();
     });

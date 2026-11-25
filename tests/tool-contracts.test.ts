@@ -114,6 +114,13 @@ describe('write_file', () => {
         expect(await stored('empty.txt')).toBe('');
     });
 
+    it('a bash script that writes a JavaScript fixture with printf is not refused as JavaScript (review of dde5141)', async () => {
+        const r = await tool('execute_code', { language: 'bash', code: "printf 'const fs = require(\"fs\");\nconsole.log(1)\n' > fixture.js" });
+        expect(String(r.error ?? '')).not.toMatch(/This is JavaScript/);
+        const raw = await tool('execute_code', { language: 'bash', code: "const fs = require('fs');\nconsole.log(1)" });
+        expect(String(raw.error ?? '')).toMatch(/This is JavaScript/);
+    });
+
     // v0.66: 24 of 47 pathless write_file calls carried `language` — code meant to be run.
     it('points a pathless call that carries a language to execute_code', async () => {
         const r = await tool('write_file', { content: 'print(1)', language: 'python' });

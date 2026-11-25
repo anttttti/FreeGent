@@ -30,6 +30,18 @@ describe('local endpoint with nothing to rotate to', () => {
     });
 });
 
+describe('a fixed retry wait chosen in Settings (review of 75c664a)', () => {
+    afterEach(() => localStorage.clear());
+    it('is the wait for a retry of the same local endpoint, not the 5 s flat one', () => {
+        localStorage.setItem('fg_retry_mode', 'fixed'); localStorage.setItem('fg_retry_fixed_ms', '120000');
+        const { h } = handler({ provider: 'vllm', model: 'm-fixed', url: 'http://x/v1' });
+        expect(h(0, err('HTTP 500: engine hiccup'), 120_000)).toBe(120_000);
+        localStorage.clear();
+        const d = handler({ provider: 'vllm', model: 'm-fixed2', url: 'http://x/v1' });
+        expect(d.h(0, err('HTTP 500: engine hiccup'), 1_500)).toBeLessThanOrEqual(5_000);
+    });
+});
+
 describe('repeated HTTP 403 from a cloud endpoint', () => {
     const KEY = 'tokenharbor|haiku-x';
     beforeEach(() => {

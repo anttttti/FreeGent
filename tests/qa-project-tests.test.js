@@ -542,6 +542,16 @@ describe('kept-data gate', () => {
         files['data/other.csv'] = 'replaced\n'; files['out/report.json'] = '{}';
         expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
     });
+    it('rewriting the same input with other wrong data is a new attempt, not the accepted retry (review of dde5141)', async () => {
+        Object.assign(files, { [T]: task3('todo'), 'data/rows.csv': 'real 1\nreal 2\n' });
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        files['data/rows.csv'] = 'invented a\n';
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(false);
+        files['data/rows.csv'] = 'invented b\n';                            // other wrong data
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);   // the same data again: accepted
+    });
     it('bounces a done that deleted an input data file (review of dde5141)', async () => {
         Object.assign(files, { [T]: task3('todo'), 'data/events.csv': 'real line 1\n' });
         delete files[TASK];

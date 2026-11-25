@@ -2720,7 +2720,8 @@ function _looksLikePython(code: string): boolean {
 const _JS_LINE_RE = /^\s*(?:import\s*[{*][^\n]*\sfrom\s|import\s+[\w$]+\s+from\s+['"]|(?:const|let|var)\s+[\w${[][^\n=]*=\s*(?:require\(|await\s|\(?async\b)|console\.(?:log|error)\(|\(async\s*\(\)\s*=>)/m;
 export function _looksLikeJs(code: string): boolean {
     if (code.includes('<<') || /\bnode\b[^\n]*\s(?:-e|--eval|-p|--print|--input-type\S*)(?:\s|$)/.test(code)) return false;   // node --input-type=module -e "…" was refused 22 times in the first runs
-    return _JS_LINE_RE.test(code);
+    // A multi-line quoted argument (`printf '…\n…' > f.js`) is data, not lines of the program (review of dde5141).
+    return _JS_LINE_RE.test(code.replace(/'[^'\n]*\n[^']*'|"(?:[^"\\\n]|\\.)*\n(?:[^"\\]|\\.)*"/g, "''"));
 }
 
 // Python compile error at line 1 of the script itself (no Traceback: a SyntaxError raised while

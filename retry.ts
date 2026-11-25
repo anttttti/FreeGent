@@ -568,7 +568,9 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
             // For network-level failures (Failed to fetch / server unreachable), use exponential
             // backoff capped at 60s so a crashed local server doesn't spin at 5s forever.
             const isFetchFail = /failed to fetch|networkerror|load failed|econnreset|connection/i.test(e.message);
-            const delay = remaining > 0 ? remaining : (isCustom && !isFetchFail ? 5_000 : Math.min(d, 60_000));
+            // A wait the person chose (Settings → retry: Fixed 30 s / 2 min / 5 min) is the floor for a retry of the same endpoint; the 5 s flat wait is for the default (review of 75c664a).
+            const _fixedMode = (() => { try { return /^fixed/.test(localStorage.getItem(KEYS.RETRY_MODE) || ''); } catch { return false; } })();
+            const delay = _fixedMode ? Math.max(d, remaining) : remaining > 0 ? remaining : (isCustom && !isFetchFail ? 5_000 : Math.min(d, 60_000));
             const bounded = _boundedWait(delay, ep, e, is429, isCustom);
             if (bounded === false) return false;
             onNote(_retryNote(ep, n, e, delay));

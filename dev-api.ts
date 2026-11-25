@@ -442,6 +442,8 @@ export function pinnedFetch(serverPort: number, idleMs = POST_IDLE_MS): typeof f
                     for (const u of unzips) { prev.pipe(u); prev.on('error', e => u.destroy(e)); u.on('error', () => { /* reported to the reader below */ }); prev = u; }
                     h.delete('content-encoding'); h.delete('content-length');
                     body = prev;
+                    // Cancelling the decoded stream (a redirect that is not followed, a page that left) destroys the decoder only: the upstream response is closed with it (review of 71928f3).
+                    prev.on('close', () => { if (!res.destroyed) res.destroy(); });
                 }
                 resolve(new Response(nullBody ? null : (Readable.toWeb(body) as any), { status, headers: h }));
             });
