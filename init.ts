@@ -536,6 +536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore draft for the current chat on page load, unless the user already typed (explorations 2026-11-09 [type-before-init]: the restore wiped it;
     // what was typed is saved as the draft by the debounce).
     if (!(input?.innerText ?? input?.textContent ?? '').trim()) _restoreDraft(activeChatId);
+    else { _draftTimer = setTimeout(_saveDraft, 400); }   // text typed before this ran is kept, and saved as the draft too: else a reload brought back the older one (review of a15a727)
     (window as any).checkInterruptedRun?.();   // Autopilot was running when this tab reloaded
     // The tab died while a tool call ran (check_page says the most): logged (Developer key), with the chat it happened in.
     const _crash = takePageCheckCrash();

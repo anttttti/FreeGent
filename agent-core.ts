@@ -1411,6 +1411,8 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _preparedFor = _prep?.lease.chat;
     if (!agentStreaming && !_turnPreparing()) { try { await reloadChatIfChangedElsewhere(); } catch {} }
     if (_prep && _preparedFor !== undefined && (!_prep.lease.valid() || activeChatId !== _preparedFor)) return;   // cancelled, or the reader moved to another chat meanwhile
+    // The database may have been upgraded by another tab while this send waited (a chat, an attachment, a history refresh): the first check at the top is too early (review of e6d15e1).
+    if ((window as any).__fgTabOutdated) { appendMessage('model', '<em>FreeGent was updated in another tab, so this tab can no longer save. Reload it to continue; your message is still in the box.</em>', container); return; }
     if (!agentStreaming && !_turnPreparing()) _moveToNewChatIfDeletedElsewhere(container);
     if (agentStreaming || _turnPreparing()) {
         // The text-only queue cannot carry media. Preserve the complete submission

@@ -1,4 +1,5 @@
 import { KEYS } from './storage-keys.js';
+import { keyVaultNames } from './key-vault.js';
 import { escapeHtml, jsArg } from './html-escape.js';
 import { turnSoundEnabled } from './turn-sound.js';
 import { setPref, onPrefChange } from './prefs.js';
@@ -472,6 +473,8 @@ export function renderOrphanKeys() {
     const known = new Set<string>(Object.values(KEYS) as string[]);
     const names: string[] = [];
     try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i) || ''; if (/^fg_[a-z0-9]+_key$/.test(k) && !known.has(k)) names.push(k); } } catch {}
+    // With the passkey lock on the plaintext entries are gone from localStorage: the retired keys it holds are listed too, once unlocked (review of 75c664a).
+    try { for (const k of keyVaultNames()) if (/^fg_[a-z0-9]+_key$/.test(k) && !known.has(k) && !names.includes(k)) names.push(k); } catch {}
     box.style.display = names.length ? '' : 'none';
     box.textContent = '';
     if (!names.length) return;

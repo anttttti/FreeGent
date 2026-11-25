@@ -472,11 +472,18 @@ async function refreshMcpServer(id: string): Promise<McpServer> {
 
 // Fresh handshake + tools/list. Also returns the server's `instructions` from initialize.
 const _MAX_TOOL_PAGES = 20;
+// The credentials a server was configured with: its headers and the values in its URL's query (`?key=…`), for redacting what it sends back (review of a15a727).
+function _serverSecrets(server: { url: string; headers?: Record<string, string> }): Record<string, string> {
+    const out: Record<string, string> = { ...(server.headers ?? {}) };
+    try { let i = 0; for (const v of new URL(server.url).searchParams.values()) if (v) out[`__q${i++}`] = v; } catch {}
+    return out;
+}
 async function _listTools(server: { url: string; headers?: Record<string, string> }): Promise<{ tools: McpToolInfo[]; instructions: string; incomplete: boolean }> {
     _conn(server).ready = false;     // fresh handshake: headers may have changed
     const init = await _ensureSession(server);
     // A server can echo the credential it was sent in its instructions or tool descriptions; both go into the model's prompt (codex R749).
-    const _clean = (v: unknown): any => typeof v === 'string' ? redactMcpSecrets(v, server.headers) : v;
+    const _secrets = _serverSecrets(server);
+    const _clean = (v: unknown): any => typeof v === 'string' ? redactMcpSecrets(v, _secrets) : v;
     const instructions = typeof init?.instructions === 'string' ? _clean(init.instructions.trim().slice(0, _MAX_INSTRUCTIONS_STORED)) : '';
     const tools: McpToolInfo[] = [];
     let cursor: string | undefined;
@@ -484,7 +491,7 @@ async function _listTools(server: { url: string; headers?: Record<string, string
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
         for (const t of r?.tools || []) {
             if (t && typeof t.name === 'string')
-                tools.push({ name: t.name, description: _clean(t.description), inputSchema: _redactDeep(t.inputSchema, server.headers), annotations: t.annotations });   // the schema's descriptions and defaults reach the model too (night exploration D028)
+                tools.push({ name: t.name, description: _clean(t.description), inputSchema: _redactDeep(t.inputSchema, _secrets), annotations: t.annotations });   // the schema's descriptions and defaults reach the model too (night exploration D028)
         }
         cursor = r?.nextCursor;
         if (!cursor) break;
@@ -726,7 +733,7 @@ function mcpToolSpecs(): any[] {
             // The description is the server's own text, in the list the model takes for its capabilities: said to be that, like the server's usage notes
             // (hermes C18).
             // Redacted again with the credentials as they are now: one stored after the discovery is not in the text the discovery cleaned (D032).
-            let desc = `${s.name} (external MCP server; its own description): ${redactMcpSecrets((t.description || t.name).trim(), s.headers)}`;
+            let desc = `${s.name} (external MCP server; its own description): ${redactMcpSecrets((t.description || t.name).trim(), _serverSecrets(s))}`;
             if (desc.length > max) desc = desc.slice(0, max - 1) + '…';
             desc += note;
             specs.push({ name: names.get(t.name)!, description: desc, parameters: _redactDeep(sanitizeMcpSchema(t.inputSchema || { type: 'object' }), s.headers) });

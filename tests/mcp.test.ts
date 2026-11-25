@@ -531,6 +531,17 @@ describe('HTTP errors carrying a JSON-RPC reply', () => {
 });
 
 describe('secret redaction', () => {
+    it('a credential in the server URL\'s query is redacted from its instructions and tool descriptions (review of a15a727)', async () => {
+        const KEY = 'urlsecretvalue98765';
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18', instructions: `use ?key=${KEY} for access` } };
+            if (msg.method === 'tools/list') return { result: { tools: [{ name: 't', description: `needs ${KEY}`, inputSchema: { type: 'object', properties: { a: { type: 'string', description: `default ${KEY}` } } }, annotations: { readOnlyHint: true } }] } };
+            return { result: {} };
+        }, { sse: false, session: '' });
+        const s = await W.addMcpServer({ name: 'q', url: `https://q.example.com/mcp?key=${KEY}` });
+        expect(JSON.stringify({ i: s.instructions, t: s.tools })).not.toContain(KEY);   // the record's own url holds it; what goes to the model must not
+        expect(s.instructions).toContain('[redacted]');
+    });
     it('redacts raw, bare-bearer and URL-encoded header values; skips short values', () => {
         const h = { Authorization: 'Bearer tok_123456789', 'X-Goog-Api-Key': 'AIza+key/value=', 'X-Short': 'abc' };
         expect(W.redactMcpSecrets('auth=Bearer tok_123456789 raw=tok_123456789', h)).toBe('auth=[redacted] raw=[redacted]');

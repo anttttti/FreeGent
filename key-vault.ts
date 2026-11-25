@@ -229,6 +229,7 @@ function _persist(name: string, value: string | null): void {
         const next = await _encrypt(key, blob, latest);
         if (!live()) return;                       // checked again right before the (synchronous) write
         _rawSet(KEY_VAULT_LS, JSON.stringify(next));
+        _remoteSeq++;   // this tab's own save is the newest blob: a cross-tab decrypt still running holds an older one and must not install it (this tab gets no storage event for its own write; review of a15a727)
         if (_pending.get(name)?.seq === seq) _pending.delete(name);
         // Still unlocked with the same key: pick up what other tabs saved meanwhile.
         if (_cryptoKey === key && gen === _vaultGen) { const changed = _install(latest); if (changed.length) _announce(changed, 'remote'); }
@@ -357,6 +358,8 @@ export function resetKeyVault(): void {
 
 /** Values held by the vault (for redaction: they are not enumerable through localStorage). */
 export function keyVaultValues(): string[] { return [..._mem.values()].filter(Boolean); }
+/** The names of the keys held while unlocked (their values are not exposed here). */
+export function keyVaultNames(): string[] { return [..._mem.keys()]; }
 
 // ── Storage interception ────────────────────────────────────────────────────
 {

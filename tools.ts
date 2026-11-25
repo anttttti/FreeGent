@@ -1753,12 +1753,13 @@ const _missingLedger = (path: string | undefined, e: any): boolean => /\bledger\
 // to add the path. A second call that names the path and no content writes what was kept (benchmark analysis v0.97 §6.1).
 let _lostPathWrite: string | null = null;
 async function _handleWriteFile(args, context) {
+    const _sentContent = ['content', 'text', 'body', 'data'].some(k => args?.[k] !== undefined);   // `content: ""` sent on purpose is an empty file, not the retry the refusal asked for (review of a15a727)
     args = { ...args,
         path:    _normToolPath(args.path    ?? args.filename ?? args.file ?? args.filepath ?? ''),
         content: args.content ?? args.text     ?? args.body ?? args.data    ?? '',
     };
     args.path = await _rootRelativeToolPath(args.path);
-    if (args.path && args.content === '' && _lostPathWrite !== null && !context) { args.content = _lostPathWrite; _lostPathWrite = null; }
+    if (args.path && !_sentContent && _lostPathWrite !== null && !context) { args.content = _lostPathWrite; _lostPathWrite = null; }
     if (!args.path) {
         // v0.66: 47 calls had content and no path, 24 of them with a `language` argument — code
         // meant to be run, sent to the wrong tool. The bare message got the same call re-sent.

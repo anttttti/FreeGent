@@ -106,6 +106,13 @@ describe('write_file', () => {
         const again = await tool('write_file', { path: 'kept2.txt' });
         expect(await stored('kept2.txt')).not.toBe(body);
     });
+    it('a write with an explicit empty content is an empty file, not the kept body (review of a15a727)', async () => {
+        const body = 'line of text\n'.repeat(40);
+        await tool('write_file', { content: body });                     // refused, body kept
+        const w = await tool('write_file', { path: 'empty.txt', content: '' });
+        expect(w.error).toBeUndefined();
+        expect(await stored('empty.txt')).toBe('');
+    });
 
     // v0.66: 24 of 47 pathless write_file calls carried `language` — code meant to be run.
     it('points a pathless call that carries a language to execute_code', async () => {
