@@ -156,6 +156,14 @@ describe('lifecycle gates', () => {
         expect(r.reason).toMatch(/waiting on #005 \(in-progress\)/);
     });
 
+    it('depends: 5 names the task with id 005, as the runner reads it (review of 0e6582a)', async () => {
+        files['fg-tasks/005-a.md'] = '---\nid: 005\ntitle: A\nstatus: done\n---\n# T\n';
+        files['fg-tasks/009-dep.md'] = '---\nid: 009\ntitle: Dependent\nstatus: todo\ndepends: 5\n---\n# T\n';
+        const r = await W.transitionTask('fg-tasks/009-dep.md', 'in-progress');
+        expect(r.reason ?? '').not.toMatch(/not found/);
+        expect(r.transitioned).toBe(true);
+    });
+
     it('a gate name that does not exist stops the transition instead of counting as passed (codex R385)', async () => {
         files['fg-tasks/001-t.md'] = task('- [x] done\n');
         files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- test-runer\n';
@@ -236,6 +244,20 @@ describe('R08 binary write_file from a worker is staged, not applied', () => {
         expect(r.success).toBe(true);
         expect(ctx.binary.get('asset.bin')).toBe('AAEC');
         expect(writes).toEqual([]);
+    });
+});
+
+describe('a worker cannot move a task status through a staged edit (reviews of 0e6582a, 20bf50b)', () => {
+    it('write_file and replace_in_file on a task file keep its status', async () => {
+        const T = 'fg-tasks/001-a.md', body = '---\nid: 001\ntitle: A\nstatus: in-progress\n---\n# A\n';
+        const ctx = { snapshot: new Map([[T, body]]), staging: new Map(), binary: new Map() };
+        const w = await W.executeToolAsync('write_file', { path: T, content: body.replace('in-progress', 'done') }, ctx);
+        expect(w.error).toMatch(/change the status/);
+        const r = await W.executeToolAsync('replace_in_file', { path: T, old_string: 'status: in-progress', new_string: 'status: done' }, ctx);
+        expect(r.error ?? r.message ?? '').toMatch(/change the status/);
+        expect(ctx.staging.size).toBe(0);
+        const ok = await W.executeToolAsync('write_file', { path: T, content: body + 'notes\n' }, ctx);
+        expect(ok.success).toBe(true);
     });
 });
 

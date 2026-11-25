@@ -695,7 +695,7 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
             // A response marked no-store counts the same way whatever its method: the server says not
             // to reuse it (a gateway that runs operations from a GET URL marks them so).
             if (name === 'fetch_url' && (!/^(GET|HEAD)$/i.test(String(args?.method ?? 'GET')) || fetchSaidNoStore(result))) repeatCache.clear();
-            if (!result?.error && !_isFetchRead(name, args)) {
+            if (!result?.error && !_isFetchRead(name, args) && name !== 'update_task_status') {   // a refusal ({ok:false, blocked:true}) has no `error`: an identical retry must reach the gates again (review of 20bf50b)
                 // Only cache successful results. Error results are retryable — caching them
                 // would fire a spurious 'tool_repeat' nudge on retry and hand the model the
                 // same failure instead of letting it try again (e.g. 'context budget exhausted').

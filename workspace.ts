@@ -93,6 +93,8 @@ async function getFsaMtime(name) {
     return file.lastModified;
 }
 
+// Instructions, roles, skills and rules are read from both roots: attaching, reconnecting or closing a folder changes what they are, and the poller only sees edits made later (review of 08bc946).
+function _reloadAllSetup(): void { const w = window as any; try { w.loadAgentsContext?.(); w.loadRoles?.(); w.loadSkills?.(); } catch {} }
 async function pollFsaChanges() {
     if (!fsaHandle) { stopFsaSync(); return; }
     try {
@@ -102,6 +104,13 @@ async function pollFsaChanges() {
 
         let listChanged  = false;
         const changed: Array<{ name: string; mtime: number }> = [];   // acknowledged (fsaSyncMtimes) only once their content was read
+        // A setup file created or deleted outside FreeGent changes the setup too, not only one whose timestamp changed (review of 08bc946).
+        let skillFileChanged = false, roleFileChanged = false, agentsFileChanged = false;
+        const markSetup = (name: string) => {
+            if (name.startsWith('skills/') || name.startsWith('rules/')) skillFileChanged = true;
+            if (name.startsWith('roles/')) roleFileChanged = true;
+            if (name === 'AGENTS.md') agentsFileChanged = true;
+        };
 
         await Promise.all(names.map(async name => {
             if (name.endsWith('/')) {
@@ -111,30 +120,25 @@ async function pollFsaChanges() {
             }
             try {
                 const mtime = await getFsaMtime(name);
-                if (!prevKeys.has(name)) { listChanged = true; fsaSyncMtimes.set(name, mtime); }
+                if (!prevKeys.has(name)) { listChanged = true; fsaSyncMtimes.set(name, mtime); markSetup(name); }
                 else if (mtime !== fsaSyncMtimes.get(name)) changed.push({ name, mtime });
             } catch {}
         }));
 
         for (const name of prevKeys)
-            if (!nameSet.has(name)) { listChanged = true; fsaSyncMtimes.delete(name); }
+            if (!nameSet.has(name)) { listChanged = true; fsaSyncMtimes.delete(name); markSetup(name); }
 
         if (!changed.length && !listChanged) return;
         if (listChanged || changed.length) await renderFileList();   // changed files: new size / timestamp
 
         let taskFileChanged  = false;
-        let skillFileChanged = false;
-        let roleFileChanged  = false;
-        let agentsFileChanged = false;
         await Promise.all(changed.map(async ({ name, mtime }) => {
             try {
                 const content = await readFsaFile(name);
                 fsaSyncMtimes.set(name, mtime);
                 notifyLocalFileChanged?.('local/' + name, content);
                 if (isTaskPath(name))  taskFileChanged  = true;
-                if (name.startsWith('skills/') || name.startsWith('rules/')) skillFileChanged = true;
-                if (name.startsWith('roles/'))  roleFileChanged  = true;
-                if (name === 'AGENTS.md') agentsFileChanged = true;
+                markSetup(name);
             } catch (e) { console.warn('[FSA] could not read the changed file, will try again:', name, e); }   // not acknowledged: the next poll sees the change again
         }));
 
@@ -599,6 +603,7 @@ async function tryRestoreLocalFolder() {
             fsaHandle = handle;
             await renderFileList();
             startFsaSync();
+            _reloadAllSetup();
             maybeRunInitAgent?.().catch(() => {});
             generateAndShowSuggestion?.().catch(() => {});
         } else if (perm === 'prompt') {
@@ -620,6 +625,7 @@ async function reconnectLocalFolder() {
             pendingFsaHandle = null;
             await renderFileList();
             startFsaSync();
+            _reloadAllSetup();
             maybeRunInitAgent?.().catch(() => {});
             generateAndShowSuggestion?.().catch(() => {});
         } else {
@@ -655,6 +661,7 @@ async function openLocalFolder() {
     updateFsaBadge();
     await renderFileList();
     startFsaSync();
+    _reloadAllSetup();
     maybeRunInitAgent?.().catch(() => {});
     generateAndShowSuggestion?.().catch(() => {});
     return fsaHandle;
@@ -667,6 +674,7 @@ function closeFsaFolder() {
     clearFsaHandle();
     updateFsaBadge();
     renderFileList();
+    _reloadAllSetup();
 }
 
 async function updateFsaBadge() {

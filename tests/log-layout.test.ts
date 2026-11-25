@@ -41,6 +41,7 @@ describe('log layout', () => {
         expect(stripControls('plain\ttext\nline 2 [x] (y)')).toBe('plain\ttext\nline 2 [x] (y)');
         expect(stripControls(csi)).toBe('red');
         expect(stripControls('a\x1b]52;c;QQ==\x07b')).toBe('ab');
+        expect(stripControls('a\x1bPq\x07pwned\x1b\\b')).toBe('ab');   // a BEL inside a DCS does not end it
     });
     it('wrapRows breaks by cell width, with wide characters counting twice', () => {
         expect(wrapRows('abcdef', 4)).toEqual(['abcd', 'ef']);

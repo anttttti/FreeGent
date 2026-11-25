@@ -125,6 +125,16 @@ describe('test-runner gate', () => {
         W.executeToolAsync = async () => ({ stdout: "== test_dark.js (exit 1)\nError: Cannot find module './helpers.js'\nFAILED: test_dark.js\n", stderr: '', exit_code: 1 });
         expect((await W.transitionTask(t2, 'done')).transitioned).toBe(false);
     });
+    it('a missing project entry point (test/runner.js) is a failure, not a missing package (review of 0e6582a)', async () => {
+        files['test_x.js'] = 'x';
+        W.executeToolAsync = async () => ({ stdout: "== test_x.js (exit 1)\nnode: Cannot find module 'test/runner.js'\nFAILED: test_x.js\n", stderr: '', exit_code: 1 });
+        expect((await W.transitionTask(TASK, 'done')).transitioned).toBe(false);
+    });
+    it('one failing assertion beside a test that lacks a package is still a failure (reviews of 0e6582a, ec38612)', async () => {
+        files['test_ui.js'] = "require('jsdom');"; files['test_calc.js'] = 'x';
+        W.executeToolAsync = async () => ({ stdout: "== test_ui.js (exit 1)\nError: Cannot find module 'jsdom'\n== test_calc.js (exit 1)\nAssertionError: 2 !== 3\nFAILED: test_ui.js test_calc.js\n", stderr: '', exit_code: 1 });
+        expect((await W.transitionTask(TASK, 'done')).transitioned).toBe(false);
+    });
     it("npm init's placeholder test script is not run", async () => {
         files['package.json'] = JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } });
         files['test_m.mjs'] = 'x';
@@ -215,6 +225,20 @@ describe('page-check gate', () => {
         errs = [{ text: 'ReferenceError: render is not defined (line 30:1 of the inlined page)', count: 1 }];   // an error the task caused
         expect((await W.transitionTask(u, 'done')).transitioned).toBe(false);
         expect((await W.transitionTask(u, 'done')).transitioned).toBe(false);
+    });
+    it('a fourth error beyond the three shown, or a changed URL, is not inherited (review of 0e6582a)', async () => {
+        const stamps = { 'index.html': 1 };
+        files['index.html'] = '<p>x</p>';
+        W.agentListFiles = async () => Object.keys(files).map(name => ({ name, lastModified: stamps[name] ?? 0 }));
+        const E = (t) => ({ text: t, count: 1 });
+        let errs = [E('Error A'), E('Error B'), E('Error C'), E('Fetch failed https://x.invalid/v1')];
+        W.runPageCheck = async (p) => ({ path: p, loaded: true, summary: 'err', errors: errs });
+        const t = 'fg-tasks/021-x.md'; files[t] = task('021');
+        await W.transitionTask(t, 'in-progress');
+        stamps['index.html'] = 2;
+        errs = [E('Error A'), E('Error B'), E('Error C'), E('Fetch failed https://x.invalid/v2')];   // the fourth error changed, past the three that are shown
+        expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);
+        expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);
     });
     it('blocks done on a page that crashed the tab and is unchanged (it is refused, not passed), once', async () => {
         files['index.html'] = '<script>for(;;){}</script>';

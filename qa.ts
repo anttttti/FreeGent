@@ -199,12 +199,14 @@ async function gate_dependency_check(taskPath, content) {
     try { allTasks = await loadTaskFiles({ strict: true }); }
     catch (e: any) { return { blocks: true, reason: `Cannot check the dependencies (${depends.map(d => '#' + d).join(', ')}): ${e?.message ?? e}. Try the status change again.` }; }
     // Two files can share an id (imported or agent-written): the dependency is met only when every one of them is done, whatever order they load in (codex R373).
+    // `depends: 5` names the task `id: 005`: numeric ids compare as numbers, as the runner's selector does (review of 0e6582a).
+    const idKey = (x: any) => { const v = String(x ?? '').trim(); return /^\d+$/.test(v) ? String(parseInt(v, 10)) : v; };
     const byId     = new Map<string, any[]>();
-    for (const t of allTasks) { const k = String(taskIdOf(t)); byId.set(k, [...(byId.get(k) ?? []), t]); }
+    for (const t of allTasks) { const k = idKey(taskIdOf(t)); byId.set(k, [...(byId.get(k) ?? []), t]); }
     const blocking = [];
 
     for (const dep of depends) {
-        const found: any[] = byId.get(dep) ?? [];
+        const found: any[] = byId.get(idKey(dep)) ?? [];
         if (!found.length) { blocking.push(`#${dep} (not found)`); continue; }
         for (const dt of found) {
             const s = (dt.fm.status || 'todo').toLowerCase();
@@ -509,8 +511,14 @@ const _QA_RUNNER_MISSING_RE = /command not found|: not found\b|Cannot find (?:mo
 // Any other bare package a test imports (`jsdom`, `puppeteer`, …) is just as unavailable in the browser sandbox, which has no npm packages: the test cannot run there,
 // and the task whose agent wrote it cannot make it pass (kanbanflow set 2, interact: dark-mode and viewport tasks blocked on `Cannot find module 'jsdom'`).
 // A relative module (`./x.js`) missing is a real failure; with a native executor node_modules may exist, so a missing package is a failure there too.
-const _QA_BARE_MODULE_RE = /Cannot find (?:module|package) '(?![./])[^']+'/i;
+const _QA_BARE_MODULE_RE = /Cannot find (?:module|package) '(?![./])(?![^']*\.(?:[cm]?[jt]sx?|json)')[^']+'/i;   // `'test/runner.js'` is a project file the shell could not find (the entry point of the test script), not a package (review of 0e6582a)
 const _sandboxLacks = (text: string): boolean => _QA_RUNNER_MISSING_RE.test(text) || (!runtime.hasNativeExec && _QA_BARE_MODULE_RE.test(text));
+// A batch report holds one "== file (exit N)" section per failing file: the batch cannot be run here only when every failing file is one the sandbox cannot run. One file that
+// fails an assertion beside one that lacks `jsdom` is a failure (reviews of 0e6582a, ec38612).
+const _sandboxLacksAll = (text: string): boolean => {
+    const sections = text.split(/^(?=== .* \(exit \d+\))/m).filter(p => p.startsWith('== '));
+    return sections.length > 1 ? sections.every(_sandboxLacks) : _sandboxLacks(text);
+};
 
 const _shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -626,7 +634,7 @@ async function gate_test_runner(taskPath, content) {
             const headers = [...output.matchAll(/^== .+ \(exit (\d+)\)$/gm)].map(m => m[1]);
             if (failed.length && headers.length >= failed.length && headers.every(h => h === '124' || h === '137'))
                 return { blocks: false, outcome: 'unknown', detail: `${failed.join(', ')} did not finish in ${_QA_FILE_TIMEOUT_S} s` };
-            if (res.exit_code === 127 || _sandboxLacks(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
+            if (res.exit_code === 127 || _sandboxLacksAll(output)) return { blocks: false, outcome: 'unknown', detail: `The tests need a tool this sandbox lacks: ${(output.split('\n').find(l => _sandboxLacks(l)) || '').trim().slice(0, 160)}` };
             const which = failed.length ? failed.join(', ') : 'the test command';
             // What the first failing file printed (its header is "== <file> (exit N)"): the first line, or for a Python traceback the
             // exception at its end. Without a header, the first error-looking line.
@@ -676,12 +684,13 @@ async function gate_page_check(taskPath) {
         return { blocks: true, reason: `${page}: ${String(r.error).replace(/^check_page: /, '')} Then set the status again.` };
     }
     if (r?.error) return { blocks: false, outcome: 'unknown', detail: `Page check: ${String(r.error).slice(0, 160)}` };
-    const errors: string[] = (r?.errors ?? []).map((e: any) => String(e.text ?? e)).slice(0, 3);
+    const allErrors: string[] = (r?.errors ?? []).map((e: any) => String(e.text ?? e));
+    const errors: string[] = allErrors.slice(0, 3);
     // No error but nothing on the page either (no text, no media, canvases transparent): its start-up code did not run.
     if (!errors.length && r?.blank) errors.push('The page shows nothing: no text and no drawing after it loaded, so its start-up code probably does not run (a function that is defined but no longer called, a script that only exports).');
     if (!errors.length) return r?.loaded === false ? { blocks: false, outcome: 'unknown', detail: `${page}: ${r.summary}` } : { blocks: false };
     const atStart = _taskStartPageErrors.get(taskPath);
-    const inherited = !!atStart && errors.every(e => atStart.includes(_errKey(e)));   // all of them were there before the task began
+    const inherited = !!atStart && (allErrors.length ? allErrors : errors).every(e => atStart.includes(_errKey(e)));   // every error the page reports, not only the three shown   // all of them were there before the task began
     if (_bouncedBefore(taskPath, 'page-check', errors.join('\n')) && (inherited || !(await _projectTouchedSince(taskPath))))
         return { blocks: false, outcome: 'unknown', detail: `${page} still reports errors (accepted on the second attempt${inherited ? '; they were already there when the task started' : ''}): ${errors[0].slice(0, 160)}` };
     const ts = new Date().toISOString().slice(0, 16) + 'Z';
@@ -771,7 +780,8 @@ async function noteTaskStart(taskPath: string): Promise<void> {
 // error at its own `done` and, having edited the page, own it: kanbanflow set 2, failchain: the independent footer task ended failed or blocked
 // on two of three engines. At `done` an error that was already there at the start is not this task's, whatever it edited.
 const _taskStartPageErrors = new Map<string, string[]>();
-const _errKey = (e: string) => e.replace(/\(line \d+:\d+[^)]*\)/g, '').replace(/\d+/g, '#').trim();
+// Only the volatile parts are blanked (line and column, long numbers such as timestamps and ports): a `/v1` that became `/v2` is a different error (review of 0e6582a).
+const _errKey = (e: string) => e.replace(/\(line \d+:\d+[^)]*\)/g, '').replace(/:\d+(?::\d+)?\b/g, ':#').replace(/\bline \d+/gi, 'line #').replace(/\d{5,}/g, '#').trim();
 async function _rootPageErrors(): Promise<{ page: string; errors: string[] } | null> {
     if (!getQaTestRunner() || typeof runPageCheck !== 'function' || runtime.hasNativeExec) return null;
     const names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean) as string[];

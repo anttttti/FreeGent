@@ -606,10 +606,10 @@ function RolePanel({ height }: { height: number }) {
                 <Text key={r.name}>
                     <Text color="yellow">{i === cursor ? '▸' : ' '}</Text>
                     <Text color={r.name === activeName ? 'cyan' : undefined} dimColor={r.name !== activeName}>
-                        {` ${r.name}`}
+                        {stripControls(` ${r.name}`)}
                     </Text>
                     {r.description
-                        ? <Text dimColor>{`  — ${r.description}`}</Text>
+                        ? <Text dimColor>{stripControls(`  — ${r.description}`)}</Text>
                         : null}
                 </Text>
             ))}

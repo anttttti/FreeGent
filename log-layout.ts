@@ -17,7 +17,8 @@ export function cellWidth(ch: string): number {
 // Text from a model, a file or a tool is data on its way to the screen. A terminal control string (OSC 52 sets the clipboard, OSC 0/2 the title)
 // split across rows by the wrapper below reached the terminal's handlers through Ink (explorations 2026-11-10 N028), and C1 forms need no wrapping at all.
 // Everything that is not printable text, a newline or a tab goes: colours the model wrote are not worth a path to the terminal.
-const _CTRL_STRING = /(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)?/g;
+// Only an OSC string (ESC ] or C1 0x9d) ends at BEL as well; DCS, SOS, PM and APC end at ST alone, so a BEL inside one does not let the rest of its payload through (review of 0aa7ac6).
+const _CTRL_STRING = /(?:\x1b\]|\x9d)[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)?|(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^\x1b\x9c\n]*(?:\x1b\\|\x9c)?/g;
 const _CSI = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?/g;
 const _ESC = /\x1b[ -/]*[0-~]?/g;
 const _CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;

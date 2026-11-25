@@ -587,9 +587,10 @@ function _localModuleDeps(src: string): string[] {
     return out;
 }
 /** The source with import/export syntax removed (everything is concatenated into one scope); `export { a as b } from` keeps its alias as `var b = a;`. */
+// `export { default as x } from` is not aliased: once `export default` is stripped there is no name to alias, and `var x = default;` was a syntax error (review of 0e6582a).
 function _stripModuleSyntax(src: string): string {
     return src
-        .replace(_REEXPORT_RE, (_m, what: string) => (what.startsWith('{') ? what.slice(1, -1).split(',') : []).map(x => /^\s*([\w$]+)\s+as\s+([\w$]+)\s*$/.exec(x)).filter((a): a is RegExpExecArray => !!a && a[1] !== a[2] && a[2] !== 'default').map(a => `var ${a[2]} = ${a[1]};`).join(' '))
+        .replace(_REEXPORT_RE, (_m, what: string) => (what.startsWith('{') ? what.slice(1, -1).split(',') : []).map(x => /^\s*([\w$]+)\s+as\s+([\w$]+)\s*$/.exec(x)).filter((a): a is RegExpExecArray => !!a && a[1] !== a[2] && a[1] !== 'default' && a[2] !== 'default').map(a => `var ${a[2]} = ${a[1]};`).join(' '))
         .replace(/^\s*import\s+(?:[^'"]*?\s+from\s+)?['"][^'"]+['"]\s*;?/gm, '')
         .replace(/^\s*export\s+default\s+/gm, '')
         .replace(/^\s*export\s+\{[^}]*\}\s*;?/gm, '')
@@ -1375,11 +1376,14 @@ window.openArtifactTab = openArtifactTab;
 // so a burst of edits reloads once.
 let _artifactRefreshTimer: any = 0;
 let _artifactChanged = new Set<string>();   // files written since the last rebuild; '' = unknown, rebuild every page
+// A page's dependency and a changed file name the same file with or without the `local/` root (the bare-path read fallback, a Local Folder write notified by its folder-relative name): both spellings match (reviews of 08bc946, 7bd4d5d).
+const _namesAlike = (a: string, b: string): boolean => a === b || a.replace(/^local\//, '') === b.replace(/^local\//, '');
+const _hasDep = (deps: Set<string> | undefined, n: string): boolean => !!deps && (deps.has(n) || deps.has('local/' + n) || deps.has(n.replace(/^local\//, '')));
 function scheduleArtifactRefresh(changedName = '') {
     if (!fileTabs.size) return;
     // Notes and task files do not change a page, unless an open page links one of them (a script under memory/ or a stylesheet) (codex R437).
     if ((/\.md$/i.test(changedName) || /^(fg-tasks|tasks|memory|skills|rules|roles)\//.test(changedName.replace(/^local\//, '')))
-        && ![...fileTabs.values()].some(ft => ft.isPreview && ft.deps?.has(changedName))) return;
+        && ![...fileTabs.values()].some(ft => ft.isPreview && _hasDep(ft.deps, changedName))) return;
     _artifactChanged.add(changedName);
     clearTimeout(_artifactRefreshTimer);
     _artifactRefreshTimer = setTimeout(async () => {
@@ -1389,7 +1393,7 @@ function scheduleArtifactRefresh(changedName = '') {
             const title = key.slice('artifact:'.length);
             if (!/\.html?$/i.test(title)) continue;
             // A write to a file the page neither is nor reads would only restart the running page for nothing.
-            if (ft.deps && !changed.has('') && ![...changed].some(n => n === title || ft.deps.has(n))) continue;
+            if (ft.deps && !changed.has('') && ![...changed].some(n => _namesAlike(n, title) || _hasDep(ft.deps, n))) continue;
             const iframe = ft.panel.querySelector('.artifact-iframe') as HTMLIFrameElement | null;
             if (!iframe) continue;
             const rev = ft._rev = ++_artifactSeq;

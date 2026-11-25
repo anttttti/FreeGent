@@ -3,6 +3,7 @@
 import { setWorkflowMode, _clearHistory, setAiJob, aiBusy } from './state.js';
 import { enabledTools, coworkEnabledTools } from './config.js';
 import { canonTaskStatus, taskIdOf } from './task-status.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { tabDiedInToolCall, spendAutoRecovery } from './page-check-guard.js';
 import * as MsgQueue from './msg-queue.js';
 import { isStepLimitStop } from './loop-director.js';
@@ -75,7 +76,7 @@ async function _snapshotRunnerChat(which: 'start' | 'end'): Promise<void> {
 const _runnerDeferred = new Set<string>();
 // What the user answered when the run paused for input, for the tasks that follow (each task gets a
 // fresh chat, so an answer given for one task is otherwise lost to the next). Cleared per run.
-const _runnerUserNotes: { task: string; question: string; answer: string }[] = [];
+const _runnerUserNotes: { task: string; question: string; answer: string; epoch: number }[] = [];
 // How many more episodes a task gets after the user answered a question and the task still was not done
 // (a task can need several answers). The task stays blocked, with a message in the run log, once spent.
 const MAX_ANSWER_EPISODES = 3;
@@ -288,7 +289,7 @@ async function _runLoop() {
                     continue;
                 }
                 if (userReply) {
-                    _runnerUserNotes.push({ task: String(task.fm.title || task.path), question: _asked.slice(0, 300), answer: userReply.slice(0, 500) });
+                    _runnerUserNotes.push({ task: String(task.fm.title || task.path), question: _asked.slice(0, 300), answer: userReply.slice(0, 500), epoch: workspaceEpoch() });
                     await _runnerTurn(userReply);
                 }
                 _runnerConsecutiveFails = 0;
@@ -984,6 +985,6 @@ function getRunnerPauseReason(): string | null { return _runnerRunning && _runne
 
 /** What the user answered while the run was on `title`: the acceptance review cannot see the chat, only the code. */
 function getRunnerUserAnswers(title: string): { question: string; answer: string }[] {
-    return _runnerUserNotes.filter(n => n.task === title).map(n => ({ question: n.question, answer: n.answer }));
+    return _runnerUserNotes.filter(n => n.task === title && n.epoch === workspaceEpoch()).map(n => ({ question: n.question, answer: n.answer }));   // answers given in a project that was since replaced are not this task's (review of 0e6582a)
 }
 Object.assign(window, { getRunnerUserAnswers, getRunnerPauseReason, runnerSendUnblockWith, runnerStartedTask, runnerStart, runnerAutopilot, runnerPause, runnerResume, runnerStartTask, runnerStop, runnerAbort, runnerSteer, runnerRestart, runnerSendUnblock, runnerInterrupt, initRunner, checkInterruptedRun, isRunnerRunning, getRunnerChatId, toggleRunnerZone });

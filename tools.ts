@@ -1825,6 +1825,7 @@ async function _handleWriteFile(args, context) {
             if (!review.approved)
                 return { error: `write_file: Edit review rejected for "${args.path}" — ${review.reason}. Revise and retry.` };
         }
+        { const moved = await _stagedStatusError('write_file', args.path, args.content, context); if (moved) return { error: moved }; }
         context.binary?.delete(args.path);   // the latest staged operation on a path is the only one (text supersedes an earlier binary write)
         context.staging.set(args.path, args.content);
         const imgDisplay = _writeFileImageDisplay(args.path, args.content);
@@ -1930,6 +1931,12 @@ function _statusChangeError(tool: string, path: string, previous: string, next: 
     if (!isTaskPath(path) || isScratchTask(path) || /\/ledger\.md$/.test(path) || !/\.md$/i.test(path)) return null;
     const from = canonTaskStatus(parseFrontmatter(previous).status), to = canonTaskStatus(parseFrontmatter(String(next)).status);
     return from === to ? null : `${tool}: this would change the status of ${path} from ${from} to ${to}. Keep its status line as it is and set the status with update_task_status; to redo a finished task, call it with the new status.`;
+}
+
+// The same refusal for a worker's staged edit, against the file as the worker found it: the commit writes the staged text, and a status moved there skipped every gate (reviews of 0e6582a, 20bf50b).
+async function _stagedStatusError(tool: string, path: string, next: string, context: any): Promise<string | null> {
+    const prev = await context.snapshot.get(path);
+    return typeof prev === 'string' ? _statusChangeError(tool, path, prev, next) : null;
 }
 
 async function _handleReplaceInFile(args, context) {
@@ -2160,14 +2167,16 @@ async function _handleReplaceInFile(args, context) {
     };
     const doReplace = async (read, write): Promise<any> => { const out = await _doReplace(read, write); return out?.success && _rangeEcho ? { ...out, note: `${_rangeEcho}${out.note ?? ''}` } : out; };
     if (context) {
+      try {
         const rif = await doReplace(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
-            async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
+            async c => { const moved = await _stagedStatusError('replace_in_file', args.path, c, context); if (moved) throw new Error(moved); context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
         return rif.success ? _withSyntaxError(rif, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true }), context) : rif;
+      } catch (e) { return { error: e.message }; }   // a refused status change
     }
     try {
         let existed = true;
@@ -2249,14 +2258,15 @@ async function _handleApplyPatch(args, context) {
         return { error: `apply_patch: patch did not apply to "${args.path}". ${fixed?.hint ?? 'Context lines may not match — read the file first and regenerate the patch.'}` };
     };
     if (context) {
+      try {
         const ap: any = await doApply(
             async () => {
                 if (context.staging.has(args.path)) return context.staging.get(args.path) ?? '';
                 return (await context.snapshot.get(args.path)) ?? '';
             },
-            async c => { context.binary?.delete(args.path); context.staging.set(args.path, c); }
+            async c => { const moved = await _stagedStatusError('apply_patch', args.path, c, context); if (moved) throw new Error(moved); context.binary?.delete(args.path); context.staging.set(args.path, c); }
         );
-        return ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true }), context) : ap;
+        return ap.success ? _withSyntaxError(ap, await _syntaxCheck(args.path, context.staging.get(args.path) ?? '', { staged: true }), context) : ap;      } catch (e) { return { error: e.message }; }   // a refused status change
     }
     try {
         const _ep = workspaceEpoch();
