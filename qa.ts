@@ -8,6 +8,7 @@ import { buildFrontmatter, splitFrontmatter, setFrontmatterFields } from './fron
 import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
 import { isCredentialPath } from './secret-egress.js';
+import { workspaceEpoch } from './exec-limits.js';
 import { noteToolStage, toolCrashCount } from './page-check-guard.js';
 
 const QA_DEFAULT_GATES = {
@@ -233,7 +234,7 @@ async function gate_completeness_check(taskPath, content) {
         // Name them: the bare count was answered by trying `done` again (uploaded chat logs of
         // 2026-10-08: five tries in a row with 3 boxes never ticked).
         const items = unchecked.slice(0, 3).map(m => `"${m[1].trim().slice(0, 70)}"`).join(', ');
-        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''} in ${taskPath}: ${items}${unchecked.length > 3 ? ', …' : ''}. Mark each one that is done as "- [x]" in the task file, e.g. replace_in_file ${JSON.stringify({ path: taskPath, old_string: `- [ ] ${unchecked[0][1].trim()}`, new_string: `- [x] ${unchecked[0][1].trim()}` })}, then set the status again.` };
+        return { blocks: true, reason: `Plan incomplete: ${unchecked.length} unchecked step${unchecked.length > 1 ? 's' : ''} in ${taskPath}: ${items}${unchecked.length > 3 ? ', …' : ''}. Mark each one that is done as "- [x]" in the task file, e.g. replace_in_file ${JSON.stringify({ path: taskPath, old_string: unchecked[0][0].replace(/\s+$/, ''), new_string: unchecked[0][0].replace(/\s+$/, '').replace('[ ]', '[x]') })}, then set the status again.` };
     }
 
     const fileSec = _mdSection(content, 'Files');
@@ -726,6 +727,7 @@ export function sourceIdentifiers(path: string, text: string): Set<string> {
         add(/(?:\b(?:command|cmd|action|subcommand|subcmd|sub|verb|mode|op|operation)|\bargv\[\d\]|\bargs\[\d\])\s*===?\s*["']([a-z][\w-]*)["']/gi);
         add(/\badd_parser\(\s*["']([a-z][\w-]*)["']/g);     // argparse sub-commands
         add(/\.command\(\s*["']([a-z][\w-]*)["']/g);        // commander
+        add(/\bcase\s+["']([a-z][\w-]*)["']\s*:/g);          // `case "report":` of a switch dispatcher (review of dde5141)
     }
     return ids;
 }
@@ -746,6 +748,7 @@ async function _projectIdentifiers(): Promise<Map<string, Set<string>>> {
 const _DATA_RE = /\.(?:log|csv|tsv|json|jsonl|txt|xml|ya?ml|ini|toml|sql)$/i;
 const _CONFIG_RE = /(?:^|\/)(?:package(?:-lock)?|tsconfig[\w.-]*|manifest|\.eslintrc|composer|deno)\.json$|^(?:local\/)?(?:fg-tasks|memory|node_modules)\//;
 const _taskStartData = new Map<string, Map<string, string>>();
+const _taskStartDataEpoch = new Map<string, number>();   // the project the snapshot was taken in: after the project is replaced it describes other files (review of dde5141)
 async function _projectData(): Promise<Map<string, string>> {
     const out = new Map<string, string>();
     for (const f of (await agentListFiles()) || []) {
@@ -756,7 +759,7 @@ async function _projectData(): Promise<Map<string, string>> {
     return out;
 }
 async function gate_kept_data(taskPath) {
-    const before = _taskStartData.get(taskPath);
+    const before = _taskStartDataEpoch.get(taskPath) === workspaceEpoch() ? _taskStartData.get(taskPath) : undefined;
     if (!before?.size) return { blocks: false };
     const now = await _projectData();
     // A recorded file that is not in the new sample was deleted, grew past the size limit or fell out of the 40-file cut: read it itself (review of dde5141).
@@ -777,7 +780,7 @@ async function gate_kept_data(taskPath) {
     return { blocks: true, reason: `This task changed ${names}, which existed before it. Test data goes in a scratch file (tmp/…), not in the input the code is meant to process. Put it back; if changing it is what the task asks for, say so in the summary and set the status again. ${n0}: ${orig}`.slice(0, 2200) };
 }
 async function noteTaskStart(taskPath: string): Promise<void> {
-    try { _taskStartData.set(taskPath, await _projectData()); } catch {}
+    try { _taskStartData.set(taskPath, await _projectData()); _taskStartDataEpoch.set(taskPath, workspaceEpoch()); } catch {}
     try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
     try { _taskStartFiles.set(taskPath, await _projectStamps()); } catch {}
     try { const e = await _rootPageErrors(); if (e) _taskStartPageErrors.set(taskPath, e.errors); } catch {}

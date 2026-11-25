@@ -58,7 +58,7 @@ export const isScratchTask = (path: unknown): boolean => /^fg-tasks\/current\.md
 // A task file written by a worker run's merge keeps the front matter it has on disk (id, title, status, depends…); only the body is the worker's. A status
 // moves through the gates only (kanbanflow set 3, vague: a worker's copy said done, the unticked box and every gate went unseen), and a copy without the `id`
 // line took the task out of every dependency lookup ("#005 needs #004" with #004 done, the board stopped with two tasks open).
-const _FM_BLOCK = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+const _FM_BLOCK = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;   // an opening `---` may be followed by spaces, as the shared parser reads it (review of dde5141)
 export function keepTaskFrontMatter(path: string, previous: string | null, next: string): string {
     if (previous === null || !isTaskPath(path) || isScratchTask(path) || /\/ledger\.md$/.test(path) || !/\.md$/i.test(path)) return next;
     const was = _FM_BLOCK.exec(previous)?.[0];

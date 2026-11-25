@@ -140,7 +140,7 @@ function _writeCalls(beat = Date.now()): void {
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
 export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number; scripts?: string[] }): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 4000)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts } : {}) } : {}) });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 4000)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts.map(f => redactForLog(String(f))) } : {}) } : {}) });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();
@@ -202,6 +202,7 @@ export const toolSig = (name: string, args: unknown): string => {
  *  The same command on files that have changed since is a new attempt; on files that have not, it is the crash again (kanbanflow logs: the same
  *  `node test_imports.mjs && …` took the tab down four times in four minutes after the note said not to run it unchanged). */
 export function sameCallCrashed(sig: string, ws: number, scripts: string[] = []): { at: number; seconds: number; script?: string } | null {
+    scripts = scripts.map(f => redactForLog(String(f)));   // stored redacted (a path can carry a saved credential): compared the same way (review of fee2a3c)
     try {
         const list = JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[];
         for (const c of [...list].reverse()) for (const x of c.calls || []) {
@@ -215,10 +216,20 @@ export function sameCallCrashed(sig: string, ws: number, scripts: string[] = [])
     return null;
 }
 
-/** The script files a shell command runs (`node a.mjs`, `python3 -u b.py`, `bash c.sh`), in order, without repeats. */
+/** The script files a shell command runs (`node a.mjs`, `python3 -u b.py`, `bash c.sh`), in order, without repeats. A script is named with the folder a preceding `cd` moved to
+ *  (`cd app-a && node test.mjs` is app-a/test.mjs), text only printed (`echo "node a.mjs"`) is not run, and a run under a `timeout` wrapper is a different command: the refusal
+ *  itself recommends it (review of fee2a3c). */
 export function commandScripts(code: unknown): string[] {
     const out = new Set<string>();
-    for (const m of String(code ?? '').matchAll(/\b(?:node|deno|bun|tsx|python3?|bash|sh)\s+(?:-[\w-]+\s+)*['"]?([^\s;&|<>'"]+\.(?:mjs|cjs|js|ts|py|sh))\b/g)) out.add(m[1].replace(/^\.\//, ''));
+    let dir = '';
+    for (const seg of String(code ?? '').split(/&&|\|\||;|\n|\|/)) {
+        const t = seg.trim();
+        const cd = /^cd\s+['"]?([^\s'"]+)['"]?\s*$/.exec(t);
+        if (cd) { dir = cd[1].replace(/^\/workspace(?:\/|$)/, '').replace(/^\.\//, '').replace(/\/+$/, ''); continue; }   // /workspace is the workspace root
+        if (/^(?:echo|printf|cat|grep|rg|head|tail)\b/.test(t) || /^(?:timeout|nice|time)\b/.test(t)) continue;
+        const m = /\b(?:node|deno|bun|tsx|python3?|bash|sh)\s+(?:-[\w-]+\s+)*['"]?([^\s;&|<>'"]+\.(?:mjs|cjs|js|ts|py|sh))\b/.exec(t);
+        if (m) { const f = m[1].replace(/^\.\//, ''); out.add(dir && !f.startsWith('/') ? `${dir}/${f}` : f); }
+    }
     return [...out];
 }
 

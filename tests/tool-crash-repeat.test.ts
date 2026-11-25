@@ -29,7 +29,11 @@ describe('a call that took the tab down is recognised by its tool, arguments and
     it('a chain or pipe that runs the scripts of a crashed command is that crash again, a different file state or script set is not', () => {
         const code = 'cd /workspace && node check_chem.mjs && echo "===" && node check_chem2.mjs';
         expect(commandScripts(code)).toEqual(['check_chem.mjs', 'check_chem2.mjs']);
-        expect(commandScripts('node ./a.mjs | head -5; python3 -u b.py; timeout 20 node c.mjs')).toEqual(['a.mjs', 'b.py', 'c.mjs']);   // pipes, `;` and a `timeout` prefix do not hide a script
+        expect(commandScripts('node ./a.mjs | head -5; python3 -u b.py; timeout 20 node c.mjs')).toEqual(['a.mjs', 'b.py']);   // pipes and `;`; a run under `timeout` is the run the refusal recommends, so it is not matched (review of fee2a3c)
+        expect(commandScripts('cd app-a && node test.mjs')).toEqual(['app-a/test.mjs']);
+        expect(commandScripts('cd app-a && node test.mjs; cd ../app-b && node test.mjs')).toEqual(['app-a/test.mjs', '../app-b/test.mjs']);
+        expect(commandScripts('echo "node test.mjs"; printf "python3 x.py"')).toEqual([]);
+        expect(commandScripts('FOO=1 node a.mjs')).toEqual(['a.mjs']);   // a variable prefix does not hide a script
         localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'execute_code', label: 'x', t: 1000, sig: 's1', ws: 500, scripts: ['check_chem.mjs', 'check_chem2.mjs'] }], chatId: null, session: 's', version: 'v', beat: 31_000 }]));
         const longer = commandScripts(code + ' && node check_cpz.mjs');
         expect(sameCallCrashed('other', 500, longer)).toMatchObject({ seconds: 30, script: 'check_chem.mjs, check_chem2.mjs' });

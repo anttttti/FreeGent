@@ -33,6 +33,13 @@ describe('browser-tour fixes, low-severity round', () => {
             expect(e.message).not.toContain('[object Object]');
         }
     });
+    it('a structured error code is kept when the message is generic, so a context overflow is recognised (review of fee2a3c)', async () => {
+        const { _httpErrorFromResponse, _isContextOverflowError } = await import('../retry.ts') as any;
+        const e: any = await _httpErrorFromResponse(new Response(JSON.stringify({ error: { code: 'context_length_exceeded', message: 'Bad request' } }), { status: 400 }));
+        expect(e.message).toBe('HTTP 400: Bad request (context_length_exceeded)');
+        const ok: any = await _httpErrorFromResponse(new Response(JSON.stringify({ error: { code: 'invalid_api_key', message: 'Invalid api key (invalid_api_key)' } }), { status: 401 }));
+        expect(ok.message.match(/invalid_api_key/g)).toHaveLength(1);
+    });
     it('task slugs keep the base letters of accented titles', () => {
         const slug = (t: string) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
         expect(slug('Ünïcödé 日本語 🎉')).toBe('unicode');

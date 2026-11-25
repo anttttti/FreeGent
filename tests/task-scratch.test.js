@@ -66,6 +66,11 @@ describe('keepTaskFrontMatter (a worker run merging a task file)', () => {
         expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('in-progress', ' '), file('', 'x', false))).toBe(file('in-progress', 'x'));
         expect(keepTaskFrontMatter('fg-tasks/003-t.md', file('in-progress', ' '), '---\ntitle: T\n---\n# T\n')).toBe(file('in-progress', ' ').split('## Acceptance')[0]);
     });
+    it('an opening `---` followed by spaces is still the front matter (review of dde5141)', async () => {
+        const { keepTaskFrontMatter } = await import('../task-status.js');
+        const spaced = file('in-progress', ' ').replace(/^---\n/, '---  \n');
+        expect(keepTaskFrontMatter('fg-tasks/003-t.md', spaced, file('done', 'x'))).toBe(spaced.replace('[ ]', '[x]'));
+    });
     it('leaves other files, an unchanged front matter and a new file alone', async () => {
         const { keepTaskFrontMatter } = await import('../task-status.js');
         expect(keepTaskFrontMatter('src/a.md', file('todo', ' '), file('done', ' '))).toBe(file('done', ' '));

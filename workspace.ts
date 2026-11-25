@@ -3561,7 +3561,8 @@ export function validateProjectData(data: any): void {
         if (!f || typeof f !== 'object') throw new Error(`Workspace entry ${i + 1} is not a file.`);
         if (typeof f.name !== 'string' || !f.name.trim()) throw new Error(`Workspace entry ${i + 1} has no file name.`);
         // A name with a `..` segment cannot be addressed by any file operation (they canonicalise it): the record would sit in the store unreadable (codex R820).
-        if (/(?:^|\/)\.\.(?:\/|$)/.test(f.name)) throw new Error(`Workspace file "${f.name}" has a path that leaves the workspace.`);
+        // Backslashes count as separators too: workspace lookups turn them into slashes (review of a15a727).
+        if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(f.name)) throw new Error(`Workspace file "${f.name}" has a path that leaves the workspace.`);
         if (typeof f.content !== 'string') throw new Error(`Workspace file "${f.name}" has no text content.`);
         if (f.encoding != null && f.encoding !== 'base64') throw new Error(`Workspace file "${f.name}" has an unknown encoding.`);
     }

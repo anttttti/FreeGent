@@ -305,7 +305,8 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
         while (maxTok < 1024 && dropOldest()) fit();
         if (maxTok < 256) throw new Error('history too large to summarize');
 
-        const _compactIsTransient = (e: any) => isCustomEndpoint(ep) ||
+        // An input-too-long refusal (HTTP 400 "prompt is too long") is answered by dropping older messages in the handler, so it must reach it (review of fee2a3c).
+        const _compactIsTransient = (e: any) => isCustomEndpoint(ep) || parseContextOverflow(e, 256) !== null ||
             /HTTP 4\d\d.*(?:not found|no endpoint|no model|invalid model|model.*not.*exist|does not exist)/i.test(e.message);
         const data = await withRetry(() => withEndpointSlot(ep, null, async () => {
             const wait = knownLimitWaitMs(ep);

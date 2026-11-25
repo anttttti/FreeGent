@@ -3306,6 +3306,8 @@ function _noteCredentialReads(name: string, args: any, result: any): void {
 }
 
 async function _executeToolAsyncInner(name, args, context = null, onProgress?: (message:string)=>void) {
+    // The turn this call belongs to: Stop followed by the turn's teardown clears or replaces the global controller before a pending judge or approval settles, and a stopped call must not run (review of de2c857).
+    const _turnSignal = activeAbortController?.signal;
     // Role tool-filter enforcement: reject calls to tools outside the role's allowed set.
     // context is non-null for sub-worker calls; those bypass the role filter (forWorker=true).
     if (!context && typeof mainAgentRole !== 'undefined' && mainAgentRole?.tools
@@ -3370,11 +3372,11 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
             return { error: `[Intent validation — ${check.level === 'block' ? 'BLOCKED' : 'FLAGGED'}] ${check.reason}. If this is intentional, make the request explicit in your message.` };
         }
         // Stop pressed while the judge was running aborted the judge, which reads as "no verdict" and let the call through: a stopped turn runs nothing (codex R902).
-        if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
+        if (!context && (_turnSignal?.aborted || activeAbortController?.signal?.aborted)) return { error: 'The turn was stopped before this tool ran.' };
     }
 
     // Stop during the intent judge aborts its request, which reads as "no verdict": the call must not run on that (codex R902).
-    if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
+    if (!context && (_turnSignal?.aborted || activeAbortController?.signal?.aborted)) return { error: 'The turn was stopped before this tool ran.' };
 
     // Content from outside the conversation is about to enter the context: from here on this turn, risky calls can be screened.
     // (After this call's own check: the fetch that brings content in is not judged against content it has not returned yet.)
@@ -3397,7 +3399,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
             const allowed = await requestToolApproval(name, args);
             if (!allowed) return { error: 'User denied tool execution.' };
             // Approved late: if the turn was stopped meanwhile, nothing may run.
-            if (!context && activeAbortController?.signal?.aborted) return { error: 'The turn was stopped before this tool ran.' };
+            if (!context && (_turnSignal?.aborted || activeAbortController?.signal?.aborted)) return { error: 'The turn was stopped before this tool ran.' };
             if (!context && isToolOffByUser(name)) return { error: `Tool '${name}' was turned off in Settings → Tools while waiting for approval.` };   // codex R901
         }
     }

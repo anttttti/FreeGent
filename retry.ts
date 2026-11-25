@@ -620,6 +620,9 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
         if (retryAfterMs === null && bodyWait > 0 && bodyWait < 86_400) retryAfterMs = Math.ceil(bodyWait) * 1000;
         const detail = _detailText(j.message || j.detail || j.error?.message || (typeof j.error === 'string' ? j.error : ''));
         if (detail) msg += ': ' + detail;
+        // A structured code with a generic message ("context_length_exceeded", "Bad request") is what the overflow check reads (review of fee2a3c).
+        const code = typeof j.error?.code === 'string' ? j.error.code : '';
+        if (code && !msg.includes(code)) msg += ` (${code})`;
         const raw = j.error?.metadata?.raw;
         if (raw) {
             try { const r = typeof raw === 'string' ? JSON.parse(raw) : raw; msg += ': ' + (_detailText(r.error?.message || r.message) || _detailText(raw)); }

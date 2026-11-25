@@ -347,6 +347,19 @@ describe('kept-features gate', () => {
         expect(r.reason).toMatch(/report \(logtool\.py; task #002/);
     });
 
+    it('names a command that only a switch `case "report":` dispatched, once the task dropped it (review of dde5141)', async () => {
+        const T2 = 'fg-tasks/002-json-report.md', T3 = 'fg-tasks/003-argument-errors.md';
+        const tool = (cmds) => `switch (cmd) {\n${cmds.map(c => `  case "${c}":\n    break;`).join('\n')}\n}`;
+        Object.assign(files, { [T2]: done1.replace('Search box', 'JSON report').replace('Add a search input that filters the table.', 'The report command writes the summary as JSON.'), [T3]: t4('todo').replace('004', '003'), 'logtool.mjs': tool(['report', 'errors']) });
+        delete files[TASK];
+        W.loadTaskFiles = async () => Object.keys(files).filter(f => /^fg-tasks\/\d+-/.test(f)).map(f => ({ path: f, fm: { id: f.slice(9, 12), title: /title: (.*)/.exec(files[f])[1], status: /status: (.*)/.exec(files[f])[1] } }));
+        await W.transitionTask(T3, 'in-progress');
+        files['logtool.mjs'] = tool(['errors']);
+        const r = await W.transitionTask(T3, 'done');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/report \(logtool\.mjs; task #002/);
+    });
+
     it('says nothing when the earlier work is still there or nothing mentions it', async () => {
         Object.assign(files, { [T1]: done1, [T4]: t4('todo'), 'index.html': page(true) });
         delete files[TASK];
@@ -489,6 +502,15 @@ describe('kept-data gate', () => {
         expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
     });
 
+    it('a snapshot taken in a project that was replaced since describes other files and is not compared (review of dde5141)', async () => {
+        Object.assign(files, { [T]: task3('todo'), 'data/other.csv': 'a,b\n1,2\n' });
+        delete files[TASK];
+        await W.transitionTask(T, 'in-progress');
+        const { bumpWorkspaceEpoch } = await import('../exec-limits.ts');
+        bumpWorkspaceEpoch();
+        files['data/other.csv'] = 'replaced\n'; files['out/report.json'] = '{}';
+        expect((await W.transitionTask(T, 'done')).transitioned).toBe(true);
+    });
     it('bounces a done that deleted an input data file (review of dde5141)', async () => {
         Object.assign(files, { [T]: task3('todo'), 'data/events.csv': 'real line 1\n' });
         delete files[TASK];

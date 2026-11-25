@@ -56,6 +56,12 @@ describe('lifecycle gates', () => {
         W.refreshTasks = async () => {};
     });
 
+    it('the suggested replace_in_file names the checkbox line exactly as written (review of dde5141)', async () => {
+        files['fg-tasks/005-t.md'] = task('-  [ ] verify output\n');
+        const r = (await W.transitionTask('fg-tasks/005-t.md', 'review')).reason;
+        expect(r).toContain(JSON.stringify({ path: 'fg-tasks/005-t.md', old_string: '-  [ ] verify output', new_string: '-  [x] verify output' }));
+    });
+
     it('a checkbox quoted in a fence or an HTML comment is not an unfinished step (W002), a real one beside it still is', async () => {
         const quoted = '```md\n- [ ] sample-checkbox\n```\n\n````\n```\n- [ ] inner\n```\n````\n\n<!-- - [ ] commented -->\n\n~~~\n- [ ] tilde\n';   // the last fence is never closed
         files['fg-tasks/003-t.md'] = task('- [x] done step\n\n' + quoted);
