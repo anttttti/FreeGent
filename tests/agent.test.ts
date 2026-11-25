@@ -39,6 +39,7 @@ describe('estimateTokens', () => {
 
 describe('toolLabel', () => {
     it('read_file', () => expect(W.toolLabel('read_file', { path: 'foo.txt' })).toBe('read:foo.txt'));
+    it('a numeric or object query does not throw (review of f1366cd)', () => { for (const q of [5, { a: 1 }, null]) expect(() => W.toolLabel('web_search', { query: q }), String(q)).not.toThrow(); expect(W.toolLabel('fetch_url', { url: 12345 })).toBe('fetch:12345'); });
     it('write_file', () => expect(W.toolLabel('write_file', { path: 'bar.md' })).toBe('write:bar.md'));
     it('delete_file', () => expect(W.toolLabel('delete_file', { path: 'x.txt' })).toBe('del:x.txt'));
     it('list_files', () => expect(W.toolLabel('list_files', {})).toBe('list_files'));

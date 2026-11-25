@@ -278,7 +278,7 @@ export default defineConfig(() => {
         },
       } : {}),
       // The token guards /api/*, not the static files: Vite served every file of the checkout, including what git ignores (review notes, results, .claude/, the TUI's profile), to any device on a LAN-bound server (explorations 2026-11-10 E27). Setting `deny` replaces Vite's defaults, so those are repeated; the private folders are anchored at the checkout (a bare `**/work/**` would also match the checkout's own parent folder).
-      fs: { deny: ['.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**', ...['.claude', ...localIgnoredDirs()].map(d => `${process.cwd()}/${d}/**`), `${process.cwd()}/fg-current-profile.json`] },
+      fs: { deny: ['.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**', '**/chat-export-*.md', ...['.claude', ...localIgnoredDirs()].map(d => `${process.cwd()}/${d}/**`), `${process.cwd()}/fg-current-profile.json`] },
       watch: {
         // Directories this checkout keeps out of git (scratch areas, notes, results, sibling repositories) can hold thousands of files: watching them exhausts inotify and the server dies
         ignored: ['**/tmp/**', '**/logs/**', '**/research/**', '**/test-results/**', ...localIgnoredDirs().map(d => `**/${d}/**`)],

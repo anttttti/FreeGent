@@ -299,6 +299,8 @@ async function _restoreCheckpointWorkspaceUI(ckptId: string): Promise<'ok' | 'mi
 }
 
 async function applyCheckpoint(ckptId: string): Promise<boolean> {
+    // An outdated tab cannot save what a restore or a re-run would change: it restored the workspace and cut the history before agentSend refused (review of e6d15e1).
+    if ((window as any).__fgTabOutdated) { appendMessage?.('model', '<em style="color:var(--muted)">FreeGent was updated in another tab, so this tab can no longer save. Reload it to restore a checkpoint or re-run.</em>'); return false; }
     const raw = localStorage.getItem(ckptKey(ckptId));
     if (!raw) {
         // Checkpoint metadata was cleared (e.g. browser storage cleared, or >50 turns).

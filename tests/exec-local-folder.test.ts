@@ -21,6 +21,13 @@ describe('live Local Folder files in a run', () => {
         expect(snap.get('local/b.txt')).toBe('T:only live');
     });
 
+    it('an imported snapshot listed as local/ is not live: its binary record is not replaced by text (review of d385ad1)', async () => {
+        const files: Record<string, any> = { 'local/data.xlsx': { base64: 'AAEC' } }, omitted = new Set<string>(), snap = snapshotWorkspace([{ name: 'local/data.xlsx', content: 'AAEC', encoding: 'base64' }]);
+        await addLiveFolderInput({ list: async () => [{ name: 'local/data.xlsx', isLocal: true, snapshot: true }], read: async () => 'extracted text', maxChars: 1000, put: (n, c) => { files[n] = c; }, snap, omitted });
+        expect(files['local/data.xlsx']).toEqual({ base64: 'AAEC' });
+        expect(omitted.size).toBe(0);
+    });
+
     it('a folder file changed while the run worked is not overwritten; an unchanged one is', async () => {
         for (const k of Object.keys(live)) delete live[k];
         live['local/a.txt'] = 'v1'; live['local/b.txt'] = 'v1';

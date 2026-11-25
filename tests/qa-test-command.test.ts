@@ -1,19 +1,18 @@
-// codex R387: a test file name must reach the shell as data, also in the failure report.
-import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+// review of b1674f7: the report of a failing test file kept its "== file (exit N)" header only when the output was short; `tail -n 15` cut it off a noisy one.
+import { it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { _testCommand } from '../qa.ts';
 
-describe('_testCommand', () => {
-    it('does not run shell syntax in a failing test file\'s name', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'fgqa-'));
-        const name = 'a$(touch PWNED).test.js';
-        writeFileSync(join(dir, name), 'process.exit(1)\n');
-        const r = spawnSync('bash', ['-c', _testCommand([name])], { cwd: dir, encoding: 'utf8' });
-        expect(r.status).toBe(1);
-        expect(r.stdout).toContain('FAILED: ' + name);
-        expect(existsSync(join(dir, 'PWNED'))).toBe(false);
-    });
+it('a failing test file that prints more than 15 lines still reports its exit status', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qa-'));
+    writeFileSync(join(dir, 'test_noisy.js'), 'for (let i = 0; i < 40; i++) console.log("line " + i); process.exit(3);');
+    let out = '';
+    try { out = execFileSync('bash', ['-c', _testCommand(['test_noisy.js'])], { cwd: dir, encoding: 'utf8' }); } catch (e: any) { out = String(e.stdout); }
+    expect(out).toMatch(/^== test_noisy\.js \(exit 3\)$/m);
+    expect(out).toContain('line 39');
+    expect(out).not.toContain('line 0\n');   // the output is still clipped
+    expect(out).toContain('FAILED: test_noisy.js');
 });

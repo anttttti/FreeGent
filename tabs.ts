@@ -9,6 +9,7 @@ import { previewKindOfName, mimeOfName } from './mime.js';
 import { pptxSlides, odfText, fixXlsxCharRefs } from './office-text.js';
 import { sandboxCspMeta } from './privacy.js';
 import { wantsCheckWindow, ensureCheckWindow, releaseCheckWindow, loadInCheckWindow, checkWindowAlive, type CheckWindowSession } from './check-window.js';
+import { redactForLog } from './dev-log.js';
 import { beginPageCheck, endPageCheck, notePageCheck, crashedBefore, describePageCheckCrash, recordIsolatedPageCrash } from './page-check-guard.js';
 
 const fileTabs = new Map(); // filename -> { tab, panel, editor, savedContent }
@@ -1265,8 +1266,8 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     }
     if (windowDied) {
         recordIsolatedPageCrash(path, fingerprint, { chatId: typeof activeChatId !== 'undefined' ? activeChatId : null, t: startedAt, beat: Date.now() - 3000,
-            stage: 'while the page was being checked in the separate window', lines: logs.slice(-8).map(l => `${l.level}: ${l.text}`.slice(0, 200)) });
-        const last = logs.slice(-3).map(l => `${l.level}: ${l.text}`.slice(0, 160)).join(' | ');
+            stage: 'while the page was being checked in the separate window', lines: logs.slice(-8).map(l => `${l.level}: ${l.text}`.slice(0, 4000)) });   // cut after redaction, in recordIsolatedPageCrash (review of fd2680e)
+        const last = logs.slice(-3).map(l => redactForLog(`${l.level}: ${l.text}`.slice(0, 4000)).slice(0, 160)).join(' | ');   // the answer goes into the task file: redacted too
         return { error: `check_page: "${path}" took the check window down: it stopped responding while being checked. The browser tab and the chats were not affected. ${last ? `The page's last console output: ${last}. ` : 'The page wrote nothing to the console. '}`
             + 'Look for an endless loop or recursion, or arrays, strings or DOM that keep growing, and fix it before checking this page again: the unchanged page is not loaded again. The window has to be opened again for the next check.', crashed: true };
     }

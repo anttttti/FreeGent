@@ -494,7 +494,6 @@ async function gate_acceptance_review(taskPath, content) {
 // next to files named in a `## Files` section, which tasks written by users do not have: in the Autopilot exploration of
 // 2026-10-27 it was skipped in 144 of 144 done transitions, and tasks that broke a test written by an earlier task were done.
 const _QA_TEST_FILE_RE = /(?:^|\/)(?:test_[^/]+\.(?:mjs|cjs|js|py)|[^/]+[._](?:test|spec)\.(?:mjs|cjs|js)|[^/]+_test\.py)$/;
-const _QA_TEST_FILES_MAX = 12;
 // The gate used to run up to 12 test files in one shell call. In a project of a game with 16 heavy test files that took 60-85 s and the tab died: 3 of 3
 // uploaded sessions (v1.0.92, v1.0.95), "task → done [gate test-runner] — running for 76.7 s when the app last responded", and the run behind it was gone.
 // Now: the tests that mention what the task changed first, at most 6, three to a shell call, and no new call after 60 s.
@@ -502,7 +501,6 @@ const _QA_TEST_FILES_MAX = 12;
 const _QA_FILE_TIMEOUT_S = 20;
 const _QA_TEST_RUN_MAX = 6, _QA_TEST_CHUNK = 3, _QA_TEST_BUDGET_MS = 60_000;
 const _QA_TEST_TIMEOUT_MS = 90_000;
-const _QA_PY_TEST_FILES_MAX = 6;   // each python3 start costs seconds in the browser
 // Runs a test module the way pytest would without needing pytest: its test_* functions that take no arguments, then any
 // unittest.TestCase in it, with the file's folder on sys.path. A file that runs its own tests under `__main__` runs as a script.
 const _QA_PY_RUNNER = 'import sys,os,runpy,inspect,unittest\n' +
@@ -544,8 +542,8 @@ export async function findProjectTests(named: string[] = [], root: '' | 'local/'
     const conv = all.map(f => f?.name).filter((n): n is string => !!n && _QA_TEST_FILE_RE.test(n) && !_QA_NOT_SOURCE_RE.test(n.slice(root.length)) && (root ? n.startsWith(root) : !n.startsWith('local/')) && !/['"$`\\]/.test(n))
         .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
     for (const n of conv) found.add(n);
-    const py = [...found].filter(f => f.endsWith('.py')).slice(0, _QA_PY_TEST_FILES_MAX);
-    return [...found].filter(f => !f.endsWith('.py') || py.includes(f)).slice(0, _QA_TEST_FILES_MAX);
+    // Every eligible file is returned (to a large bound): the run picks at most _QA_TEST_RUN_MAX of them and counts the rest as not run, so a cap here made the gate report fewer left out than there were (review of fd2680e).
+    return [...found].slice(0, 200);
 }
 
 // One command that runs every file on its own, so the result names the files that failed. The shape is the one
@@ -555,7 +553,7 @@ export function _testCommand(files: string[]): string {
     for (const f of files) {
         const run = f.endsWith('.py') ? `timeout ${_QA_FILE_TIMEOUT_S} python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `timeout ${_QA_FILE_TIMEOUT_S} node ${_shq(f)}`;
         // The path reaches the shell only as a single-quoted value: in the double-quoted report it was text a `$(…)` or a backtick in a file name could run (codex R387).
-        lines.push(`fg_qa_f=${_shq(f)}; fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed $fg_qa_f"; printf '%s\\n' "== $fg_qa_f (exit $fg_qa_rc)" "$fg_qa_out" | tail -n 15; fi`);
+        lines.push(`fg_qa_f=${_shq(f)}; fg_qa_out=$(${run} 2>&1); fg_qa_rc=$?; if [ $fg_qa_rc -ne 0 ]; then fg_qa_failed="$fg_qa_failed $fg_qa_f"; { printf '%s\\n' "== $fg_qa_f (exit $fg_qa_rc)"; printf '%s\\n' "$fg_qa_out" | tail -n 15; }; fi`);   // the header stays outside the clipped output: a test that prints more than 15 lines must still say its exit status (review of b1674f7)
     }
     lines.push(`if [ -n "$fg_qa_failed" ]; then echo "FAILED:$fg_qa_failed"; exit 1; fi; echo "${files.length} test file(s) passed"`);
     return lines.join('\n');

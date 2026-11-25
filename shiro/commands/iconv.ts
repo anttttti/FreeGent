@@ -182,6 +182,7 @@ export const iconvCmd: Command = {
       }
     }
     let result: Uint8Array | number;
+    let writeError: any = null;
     try {
       let text = '', srcErr: { err: 'illegal' | 'incomplete'; at: number } | null = null, before = 0;
       for (const b of inputs) {
@@ -206,6 +207,8 @@ export const iconvCmd: Command = {
         return 1;
       }
     } catch {
+      // A failed write of the output is the filesystem's error, not an unsupported encoding pair (review of e6d15e1).
+      if (writeError) { ctx.stderr += `iconv: ${outFile}: ${/ENOENT|no such file/i.test(String(writeError?.message ?? writeError)) ? 'No such file or directory' : String(writeError?.message ?? writeError)}\n`; return 1; }
       ctx.stderr += `iconv: conversion from \`${from}' to \`${to}' is not supported\n`;
       return 1;
     }
@@ -213,8 +216,10 @@ export const iconvCmd: Command = {
     return 0;
 
     async function emit(bytes: Uint8Array) {
-      if (outFile) await ctx.fs.writeFile(ctx.fs.resolvePath(outFile, ctx.cwd), bytes);
-      else ctx.stdout += bytesToText(bytes);
+      try {
+        if (outFile) await ctx.fs.writeFile(ctx.fs.resolvePath(outFile, ctx.cwd), bytes);
+        else ctx.stdout += bytesToText(bytes);
+      } catch (e) { writeError = e; throw e; }
     }
   },
 };

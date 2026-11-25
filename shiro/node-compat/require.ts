@@ -352,7 +352,9 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
         .slice(0, 5);
       const hint = nearby.length ? `\nSimilar files in cache: ${nearby.join(', ')}` : '';
       const isNpmPkg = !modPath.startsWith('.') && !modPath.startsWith('/');
-      const npmHint = isNpmPkg ? `\nTry: npm install ${modPath.split('/')[0]}` : '';
+      // A package with a native binding cannot be installed and run by the browser shell's JavaScript loader: say so instead of suggesting npm install (review of ec38612).
+      const _NATIVE = /^(?:better-sqlite3|sqlite3|sharp|canvas|bcrypt|node-sass|puppeteer|playwright|fsevents|node-gyp)(?:\/|$)/;
+      const npmHint = isNpmPkg ? (_NATIVE.test(modPath) ? `\n'${modPath.split('/')[0]}' is a native addon: the browser shell runs JavaScript only and cannot load it.` : `\nTry: npm install ${modPath.split('/')[0]}`) : '';
       // A script written to /tmp (cat > /tmp/x.mjs) that imports './src/a.js' from the project: Node resolves a relative import from the
       // importing file's directory, not from the working directory. Chat logs 76c6bde0, d1b1564a, 273991b8: each cost a step to work out.
       let dirHint = '';

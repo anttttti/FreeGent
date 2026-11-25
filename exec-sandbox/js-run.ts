@@ -122,5 +122,8 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
         if (e instanceof ProcessExit) return result(e.code & 0xff);
         stderr.push(thrownText(e));
         return result(1);
-    } finally { host.removeEventListener?.('unhandledrejection', onRejection); host.process?.off?.('unhandledRejection', onRejection); }
+    } finally {
+        for (const h of owned) clearTimeout(h); owned.clear();   // a throw or process.exit() leaves its timers pending: they must not fire into the next run (review of fd2680e)
+        host.removeEventListener?.('unhandledrejection', onRejection); host.process?.off?.('unhandledRejection', onRejection);
+    }
 }

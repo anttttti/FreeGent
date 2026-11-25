@@ -41,6 +41,8 @@ export function hashContent(s: string): string {
 // Own properties only: `constructor`, `toString` … are not files (review 2026-11-11 F09; MIME lookups had the same slip).
 const own = (o: Record<string, string>, k: string): string | undefined => Object.hasOwn(o, k) ? o[k] : undefined;
 
+// A path called `constructor` or `toString` is not an entry of the merge results (review of 1ce6f86).
+const hasOwnKey = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 export function planSync(workspace: Record<string, string>, local: Record<string, string>, base: Record<string, string> = {}, merges: Record<string, { conflicts: boolean }> = {}): SyncItem[] {
     const out: SyncItem[] = [];
     const paths = new Set([...Object.keys(workspace), ...Object.keys(local)]);
@@ -50,8 +52,8 @@ export function planSync(workspace: Record<string, string>, local: Record<string
             if (w === l) continue;
             if (b === w) out.push({ path, kind: 'changed-in-local', action: 'to-workspace', choices: ['to-workspace', 'to-local', 'skip'] });
             else if (b === l) out.push({ path, kind: 'changed-in-workspace', action: 'to-local', choices: ['to-local', 'to-workspace', 'skip'] });
-            else if (merges[path] && !merges[path].conflicts) out.push({ path, kind: 'conflict', action: 'merge', choices: ['merge', 'keep-both', 'to-local', 'to-workspace', 'skip'] });
-            else if (merges[path]) out.push({ path, kind: 'conflict', action: 'keep-both', choices: ['keep-both', 'merge', 'to-local', 'to-workspace', 'skip'] });
+            else if (hasOwnKey(merges, path) && !merges[path].conflicts) out.push({ path, kind: 'conflict', action: 'merge', choices: ['merge', 'keep-both', 'to-local', 'to-workspace', 'skip'] });
+            else if (hasOwnKey(merges, path)) out.push({ path, kind: 'conflict', action: 'keep-both', choices: ['keep-both', 'merge', 'to-local', 'to-workspace', 'skip'] });
             else out.push({ path, kind: 'conflict', action: 'keep-both', choices: ['keep-both', 'to-local', 'to-workspace', 'skip'] });
         } else if (w !== undefined) {
             if (b === undefined) out.push({ path, kind: 'new-in-workspace', action: 'to-local', choices: ['to-local', 'skip'] });

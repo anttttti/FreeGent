@@ -503,7 +503,16 @@ const READ_STUBS_BEFORE_PAUSE = 2;
 const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
 
 function _readRange(args: any): [number, number] {
-    return [Number(args?.start_line) || 1, Number(args?.end_line) || Infinity];
+    // The spellings read_file accepts: start/end, and offset/limit (the other harnesses' convention). The ledger saw only start_line/end_line, so a read of lines 100-149
+    // by offset/limit was recorded as the whole file and a later read of other lines was answered "already in history" (review of 16a8b2e).
+    const line = (v: any): number | undefined => { const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN; return Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined; };
+    let from = line(args?.start_line ?? args?.start), to = line(args?.end_line ?? args?.end);
+    if (from === undefined && to === undefined && args?.offset != null) {
+        from = line(args.offset) ?? 1;
+        const lim = line(args.limit);
+        if (lim) to = from + lim - 1;
+    }
+    return [from ?? 1, to ?? Infinity];
 }
 function _rangeCovered(ranges: Array<[number, number]>, [from, to]: [number, number]): boolean {
     let reach = from - 1;

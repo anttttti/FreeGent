@@ -113,3 +113,13 @@ describe('runJs timers and exit', () => {
         expect(Object.keys(r.written)).toEqual(['early.txt']);
     });
 });
+
+describe('runJs timers after a throw (review of fd2680e)', () => {
+    it('a timer the program set before it threw does not fire after the run returned', async () => {
+        (globalThis as any).__lateTimer = 0;
+        const r = await runJs(`setTimeout(() => { globalThis.__lateTimer = 1; }, 20); throw new Error('boom');`, {});
+        expect(r.exit_code).toBe(1);
+        await new Promise(res => setTimeout(res, 60));
+        expect((globalThis as any).__lateTimer).toBe(0);
+    });
+});

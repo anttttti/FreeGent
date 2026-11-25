@@ -35,6 +35,13 @@ describe('a relative import from a script outside the working directory', () => 
 });
 
 describe('a module that is not found', () => {
+    it('a native addon is not offered an npm install (review of ec38612)', () => {
+        const e = load('require("better-sqlite3");');
+        expect(e.message).toMatch(/native addon/);
+        expect(e.message).not.toMatch(/npm install better-sqlite3/);
+        const e2 = load('require("left-pad");');
+        expect(e2.message).toMatch(/npm install left-pad/);
+    });
     it("carries code MODULE_NOT_FOUND, so a script's optional-require fallback runs (review of ec38612)", () => {
         const e = load('require("sharp");');
         expect(e).toBeTruthy();

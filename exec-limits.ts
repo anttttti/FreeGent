@@ -131,7 +131,7 @@ export async function addLiveFolderInput(o: {
     budget?: { chars: number; named?: (name: string) => boolean };
 }): Promise<void> {
     for (const f of (await o.list()) || []) {
-        if (!f?.isLocal || !f.name || o.skip?.test(f.name)) continue;
+        if (!f?.isLocal || f.snapshot || !f.name || o.skip?.test(f.name)) continue;   // an imported snapshot has no live files: its records are already in the run, binary ones as binary
         let c: unknown;
         try { c = await o.read(f.name); } catch { o.omitted.add(f.name); o.large?.add(f.name); o.sizes?.set(f.name, Number(f.size) || 0); continue; }   // a file that cannot be read is one the run did not see: it may not replace it (Y020)
         const fits = !o.budget || o.budget.named?.(f.name) || (typeof c === 'string' && c.length <= o.budget.chars);

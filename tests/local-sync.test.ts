@@ -8,6 +8,10 @@ describe('planSync', () => {
         const r = planSync({ a: '1', b: '2', c: '3' }, { b: '2', c: 'x', d: '4' });
         expect(kinds(r)).toEqual({ a: 'new-in-workspace:to-local', c: 'conflict:keep-both', d: 'new-in-local:to-workspace' });
     });
+    it('a file called `constructor` has no merge result of its own (review of 1ce6f86)', () => {
+        const r = planSync({ constructor: 'a' }, { constructor: 'b' });
+        expect(kinds(r)).toEqual({ constructor: 'conflict:keep-both' });
+    });
     it('uses the base to tell which side changed', () => {
         const base = { f: '1', g: '1' };
         const r = planSync({ f: '1', g: '2' }, { f: '2', g: '1' }, base);

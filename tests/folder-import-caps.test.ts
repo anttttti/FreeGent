@@ -26,4 +26,19 @@ describe('folder import caps', () => {
         expect(msg).toMatch(/Only the first 500 files were imported; 3 more were left out/);
         vi.unstubAllGlobals();
     }, 30000);
+
+    it('picking a folder called `out` imports what is in it, and a build folder inside a picked folder is still skipped (review of fe38c85)', async () => {
+        vi.stubGlobal('alert', vi.fn());
+        const files = ['out/report.md', 'out/sub/a.txt', 'out/node_modules/x.js', 'out/vendor/y.js'].map(rel => { const f: any = file(rel); f.arrayBuffer = async () => new TextEncoder().encode('x').buffer; return f; });
+        W.uploadFiles(true);
+        const input = document.body.querySelector('input[type=file]') as HTMLInputElement;
+        Object.defineProperty(input, 'files', { value: files });
+        await (input.onchange as any)();
+        await vi.waitFor(async () => expect((await W.agentListFiles()).map((f: any) => f.name)).toContain('out/report.md'), { timeout: 20000 });
+        const names = (await W.agentListFiles()).map((f: any) => f.name);
+        expect(names).toContain('out/sub/a.txt');
+        expect(names).not.toContain('out/node_modules/x.js');
+        expect(names).not.toContain('out/vendor/y.js');
+        vi.unstubAllGlobals();
+    }, 30000);
 });

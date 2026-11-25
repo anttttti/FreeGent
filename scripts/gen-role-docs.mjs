@@ -135,8 +135,9 @@ const INTERPOLATION_NOTES = {
 };
 
 function annotateBody(body) {
+    // `_roleConciseBlock()` is a call in the template, a bare name elsewhere: both read the same note (review of fe38c85).
     return body.replace(/\$\{([^}]+)\}/g, (_, expr) =>
-        INTERPOLATION_NOTES[expr.trim()] ?? `\${${expr}}`
+        INTERPOLATION_NOTES[expr.trim().replace(/\(\)$/, '')] ?? `\${${expr}}`
     );
 }
 

@@ -35,6 +35,12 @@ describe('_checkRedundantRead', () => {
         expect(M.REDUNDANT_READ_REFUSALS_MAX).toBe(2);
     });
 
+    it('a read by offset/limit is recorded as that range, not as the whole file (review of 16a8b2e)', () => {
+        const ledger = new Map();
+        M._recordRead(ledger, { path: 'f.py', offset: 100, limit: 50 }, ok(50));
+        for (let i = 0; i < 4; i++) expect(M._checkRedundantRead(ledger, { path: 'f.py', start_line: 400, end_line: 450 }), `read ${i}`).toBeFalsy();   // lines not seen yet: never refused
+    });
+
     it('allows reads that add new lines, and reads of other files', () => {
         const ledger = new Map();
         M._recordRead(ledger, { path: 'f.py', start_line: 1, end_line: 100 }, ok());

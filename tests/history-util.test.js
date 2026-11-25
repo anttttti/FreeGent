@@ -50,6 +50,9 @@ describe('isRealUserMessage', () => {
 // ── stripInjected ─────────────────────────────────────────────────────────────
 
 describe('stripInjected', () => {
+    it('removes the crash note under either tag, including the one saved before it was renamed (review of f1366cd)', () => {
+        for (const tag of ['tool_crash', 'page_check_crash']) expect(stripInjected(`<${tag}>\nThe tab died\n</${tag}>\nadd variety`)).toBe('add variety');
+    });
     it('removes a leading guidance block but keeps the request', () => {
         const s = '<active_guidance>\nrules here\n</active_guidance>\nadd variety to the map';
         expect(stripInjected(s)).toBe('add variety to the map');

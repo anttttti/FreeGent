@@ -139,6 +139,13 @@ describe('test-runner gate', () => {
         expect(r.transitioned).toBe(false);
         expect(r.reason).toMatch(/test_d\.js/);
     });
+    it('the number of test files left out counts every eligible file, not a pre-capped list (review of fd2680e)', async () => {
+        for (let i = 0; i < 14; i++) files[`test_${String(i).padStart(2, '0')}.js`] = 'x';
+        W.executeToolAsync = async () => ({ stdout: '3 test file(s) passed', stderr: '', exit_code: 0 });
+        const r = await W.transitionTask(TASK, 'done');
+        expect(r.transitioned).toBe(true);
+        expect((r.unverified ?? []).join(' ')).toMatch(/8 of 14 test files were not run/);
+    });
     it('a missing project entry point (test/runner.js) is a failure, not a missing package (review of 0e6582a)', async () => {
         files['test_x.js'] = 'x';
         W.executeToolAsync = async () => ({ stdout: "== test_x.js (exit 1)\nnode: Cannot find module 'test/runner.js'\nFAILED: test_x.js\n", stderr: '', exit_code: 1 });

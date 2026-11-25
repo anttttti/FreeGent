@@ -19,7 +19,7 @@ import { omittedFileWriteMessage, omittedFileDeleteMessage, namesFile, EXEC_COPY
 import { bytesToBase64, isTextBytes } from './shiro/utils/bytes.js';
 import { DISPLAY_LIBS_RE, UNREADABLE_BINARY_RE } from './mime.js';
 import { combineSignals } from './abort.js';
-import { isTaskPath, isScratchTask, canonTaskStatus, isLedgerPath, TASK_STATUSES } from './task-status.js';
+import { isTaskPath, isScratchTask, canonTaskStatus, isLedgerPath, TASK_STATUSES, keepTaskFrontMatter } from './task-status.js';
 import { parseFrontmatter } from './frontmatter.js';
 import { rootPageOf, destructiveGitReason, pseudoToolInShell, doubledBackslashGrowth, overEscapedRegexLiterals, escapedLineBreaks, unescapeOnce } from './detectors.js';
 import { _knownToolNames } from './model-caps.js';
@@ -880,6 +880,7 @@ async function _handleRunGit(args: any) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ args: gitArgs }),
+            signal: activeAbortController?.signal,   // Stop ends the request too, not only the wait for its result (review of 1ce6f86)
         });
         if (!resp.ok) {
             let detail = '';
@@ -2891,10 +2892,11 @@ async function _applyStagingForRun(staging: Map<string, string | null>, snapshot
         // the file later would take this worker's unfinished edit as the run-start content and the
         // merge base. (A file that a run's own code rewrites cannot be pinned this way: its path
         // is not known before the run.)
-        try { await snapshot?.get?.(path); } catch {}
+        let original: unknown; try { original = await snapshot?.get?.(path); } catch {}
         try {
             if (content === null) await agentDeleteFile(path);
-            else await agentWriteFile(path, content);
+            // A task card keeps the front matter it had (status, id, depends) when the run's files are written out: what is on disk at the final merge is taken as the original (review of dde5141).
+            else await agentWriteFile(path, typeof original === 'string' ? keepTaskFrontMatter(path, original, content) : content);
         } catch { /* the run sees the workspace as it is */ }
     }
     const files = new Map<string, string>();
@@ -3066,13 +3068,16 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                     // Empty files are sent too: an empty __init__.py makes a directory a package.
                     const recs = await listWorkspaceFiles();
                     sentSnap = snapshotWorkspace(recs || []);
+                    // The server refuses a request over 64 MiB, which would fail every command, including those that need no file: the workspace's records and the folder's share 48 MB (review of d385ad1).
+                    let _sent = 0; const _SERVER_COPY_MAX = 48_000_000;
                     for (const rec of (recs || [])) {
                         if (!rec?.name || typeof rec.content !== 'string') continue;
-                        if (rec.content.length > 1_000_000) { omitted.add(rec.name); continue; }
+                        if (rec.content.length > 1_000_000 || _sent + rec.content.length > _SERVER_COPY_MAX) { omitted.add(rec.name); continue; }
+                        _sent += rec.content.length;
                         files[rec.name] = rec.encoding === 'base64' && rec.content ? `\x00BIN\x00${rec.content}` : rec.content;
                     }
                     // The attached Local Folder's files too: the prompt says `local/` paths are on disk, so the shell has to see them (codex R438).
-                    await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: 1_000_000, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, skip: /^local\/logs\// });
+                    await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: 1_000_000, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, skip: /^local\/logs\//, budget: { chars: Math.max(0, _SERVER_COPY_MAX - _sent) } });
                 } catch {}
                 const resp = await fetch('/api/execute', {
                     method:  'POST',
@@ -3459,18 +3464,18 @@ export function toolLabel(name, args) {
     if (name === 'delete_file')       return `del:${a.path}`;
 
     if (name === 'list_files')        return 'list_files';
-    if (name === 'web_search')        return `search:${(a.query || '').slice(0, 28)}${a.source ? '/' + a.source : ''}`;
-    if (name === 'academic_search')   return `academic:${(a.query || '').slice(0, 24)}${a.source ? '/' + a.source : ''}`;
-    if (name === 'package_search')    return `pkg:${(a.query || '').slice(0, 28)}${a.registry ? '/' + a.registry : ''}`;
-    if (name === 'deep_research')     return `research:${(a.question || a.topic || '').slice(0, 36)}`;
-    if (name === 'fetch_url')         return `fetch:${(a.url || '').replace(/^https?:\/\//, '').slice(0, 36)}`;
-    if (name === 'generate_image')    return `imagine:${(a.prompt || '').slice(0, 40)}`;
+    if (name === 'web_search')        return `search:${String(a.query ?? '').slice(0, 28)}${a.source ? '/' + a.source : ''}`;
+    if (name === 'academic_search')   return `academic:${String(a.query ?? '').slice(0, 24)}${a.source ? '/' + a.source : ''}`;
+    if (name === 'package_search')    return `pkg:${String(a.query ?? '').slice(0, 28)}${a.registry ? '/' + a.registry : ''}`;
+    if (name === 'deep_research')     return `research:${String(a.question || a.topic || '').slice(0, 36)}`;
+    if (name === 'fetch_url')         return `fetch:${String(a.url || '').replace(/^https?:\/\//, '').slice(0, 36)}`;
+    if (name === 'generate_image')    return `imagine:${String(a.prompt ?? '').slice(0, 40)}`;
     if (name === 'execute_code')      return `exec(${a.language})`;
     if (name === 'ast_query')         return `ast:${a.path}?${a.query || 'symbols'}`;
     if (name === 'run_git')           return ['git', ...runGitArgv(a)].join(' ');
     if (name === 'run_workers')       return `workers(${(Array.isArray(a.agents) ? a.agents : []).map(w => w.role ? `${w.id}:${w.role}` : w.id).join(',')})`;
     if (name === 'repo_map')                  return `repo_map${a.path_filter ? ':' + a.path_filter : ''}`;
-    if (name === 'search_workspace')            return `grep:${(a.pattern || '').slice(0, 32)}${a.path_filter ? ' in ' + a.path_filter : ''}`;
+    if (name === 'search_workspace')            return `grep:${String(a.pattern ?? '').slice(0, 32)}${a.path_filter ? ' in ' + a.path_filter : ''}`;
     if (name === 'check_page')                return `check:${a.path || '?'}`;
     if (name === 'update_task_status')        return `task:${a.path ? a.path.replace('fg-tasks/', '') : '?'} → ${a.status || '?'}`;
     if (name === 'context7_docs')             return `context7:${a.library || ''}${a.topic ? '/' + a.topic : ''}`;

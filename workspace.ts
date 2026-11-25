@@ -1,7 +1,7 @@
 // workspace.js — FreeGent file workspace
 // IndexedDB storage + optional File System Access API
 
-import { BROWSER_FOLDER_SKIP_DIRS } from './skip-dirs.js';
+import { BROWSER_FOLDER_SKIP_DIRS, SKIP_DIRS } from './skip-dirs.js';
 import { escapeHtml } from './html-escape.js';
 import { extOf, isBinaryExt, isDocExt, mimeOfName, previewKindOfName } from './mime.js';
 import { pptxSlides, odfText, docxText, fixXlsxCharRefs } from './office-text.js';
@@ -822,7 +822,7 @@ export async function agentListFiles() {
         // IDB files without local/ prefix → shown in Workspace column
         ...wsFiles.filter(f => !f.name.startsWith('local/')).map(f => ({ name: f.name, size: f.size, lastModified: f.lastModified })),
         // IDB files with local/ prefix (imported snapshot) → shown in Local Folder column when no FSA
-        ...(!fsaHandle ? wsFiles.filter(f => f.name.startsWith('local/')).map(f => ({ name: f.name, size: f.size, lastModified: f.lastModified, isLocal: true })) : []),
+        ...(!fsaHandle ? wsFiles.filter(f => f.name.startsWith('local/')).map(f => ({ name: f.name, size: f.size, lastModified: f.lastModified, isLocal: true, snapshot: true })) : []),   // snapshot: IndexedDB records, not the live folder: a run reads them from the records, with their own encoding (review of d385ad1)
         // Live-synced FSA files → shown in Local Folder column
         ...fsaNames.map(n => ({ name: 'local/' + n, isLocal: true, size: fsaSyncSizes.get(n), lastModified: fsaSyncMtimes.get(n) || undefined })),
     ];
@@ -857,7 +857,7 @@ async function _hashBothSides(): Promise<{ workspace: Record<string, string>; lo
             const r = c.value, name: string = r.name;
             const isLocal = name.startsWith('local/'), path = isLocal ? name.slice(6) : name;
             const segs = path.split('/');
-            if (!path.endsWith('/') && !segs.some(sg => BROWSER_FOLDER_SKIP_DIRS.has(sg) || sg.startsWith('.')))
+            if (!path.endsWith('/') && !segs.some(sg => SKIP_DIRS.has(sg) || sg.startsWith('.')))   // files already in the project: only the base set is hidden, `out/` or `vendor/` there are the person's own (review of fe38c85)
                 (isLocal ? local : workspace)[path] = hashContent((r.encoding || '') + '|' + (r.content || ''));
             c.continue();
         };
@@ -1010,7 +1010,7 @@ async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction
             const copy = keepBothName(it.path, n => names.has(n)); names.add(copy);
             put(copy, l); put('local/' + it.path, w);
         }
-        else if (act === 'merge' && merges[it.path]) {
+        else if (act === 'merge' && Object.prototype.hasOwnProperty.call(merges, it.path)) {
             const m = merges[it.path];
             const rec = { content: m.merged, encoding: null, lastModified: Date.now() };
             put(it.path, rec); put('local/' + it.path, rec);
@@ -1157,7 +1157,7 @@ async function _mergeProjectFiles(data: any): Promise<void> {
     const incoming: Record<string, any> = {}, incomingHash: Record<string, string> = {};
     for (const f of data.workspace || []) {
         const segs = String(f.name).split('/');
-        if (String(f.name).startsWith('local/') || String(f.name).endsWith('/') || segs.some((sg: string) => BROWSER_FOLDER_SKIP_DIRS.has(sg) || sg.startsWith('.'))) continue;
+        if (String(f.name).startsWith('local/') || String(f.name).endsWith('/') || segs.some((sg: string) => SKIP_DIRS.has(sg) || sg.startsWith('.'))) continue;
         incoming[f.name] = f; incomingHash[f.name] = hashContent((f.encoding || '') + '|' + (f.content || ''));
     }
     const { workspace } = await _hashBothSides();
@@ -1188,7 +1188,7 @@ async function _mergeProjectFiles(data: any): Promise<void> {
                 const f = incoming[it.path];
                 if (act === 'to-workspace' && f) put(it.path, f);
                 else if (act === 'keep-both' && f) { const copy = keepBothName(it.path, n => names.has(n), 'imported'); names.add(copy); put(copy, f); }
-                else if (act === 'merge' && merges[it.path]) {
+                else if (act === 'merge' && Object.prototype.hasOwnProperty.call(merges, it.path)) {
                     put(it.path, { content: merges[it.path].merged, encoding: null, lastModified: Date.now() });
                     if (merges[it.path].conflicts) markers.push(it.path);
                 }
@@ -1245,7 +1245,7 @@ function _bytesToRec(bytes: Uint8Array, asBase64: boolean): { content: string; e
 async function _cloudHashWorkspace(slug: string): Promise<{ files: Record<string, CloudFile>; hashes: Record<string, string> }> {
     const cacheRec: any = await _syncTx('readonly', st => st.get(`hcache:${slug}`));
     const cache: Record<string, [number, number, string]> = cacheRec?.files || {};
-    const names = (await listWorkspaceFileNames()).filter(n => !n.startsWith('local/') && !n.endsWith('/') && !n.split('/').some(sg => BROWSER_FOLDER_SKIP_DIRS.has(sg)));
+    const names = (await listWorkspaceFileNames()).filter(n => !n.startsWith('local/') && !n.endsWith('/') && !n.split('/').some(sg => SKIP_DIRS.has(sg)));   // the base set only: a project file under out/ or vendor/ was synced and must stay in the comparison (review of fe38c85)
     const files: Record<string, CloudFile> = {}, hashes: Record<string, string> = {}, next: Record<string, [number, number, string]> = {};
     let i = 0;
     for (const name of names) {
@@ -3105,7 +3105,8 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
             const rel  = f.webkitRelativePath || f.name;
             const segs = rel.split('/');
             // Any directory segment in the skip-list → drop the file.
-            if (segs.slice(0, -1).some(s => BROWSER_FOLDER_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
+            // Below the picked folder: webkitRelativePath starts with its name, and picking `out` itself must not skip everything in it (review of fe38c85).
+            if (segs.slice(1, -1).some(s => BROWSER_FOLDER_SKIP_DIRS.has(s) || s.startsWith('.'))) return false;
             if (/^\..+\.icloud$/.test(f.name)) { stubs++; return false; }
             if (f.size > UPLOAD_MAX_BYTES) {
                 console.warn(`[workspace] skipping large file: ${rel} (${(f.size/1024/1024).toFixed(1)} MB)`);

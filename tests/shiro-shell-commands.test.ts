@@ -471,6 +471,11 @@ describe('argv dispatch and capability failures', () => {
         expect(await ic('\\377\\376A\\000', '-f UTF-16LE -t UTF-8')).toEqual(['\uFEFFA', 0]);
         expect(await ic('\\377\\376A\\000', '-f UTF-16 -t UTF-8')).toEqual(['A', 0]);   // auto-detected BOM is consumed
     });
+    it('a missing output directory is reported as the filesystem error, not as an unsupported conversion (review of e6d15e1)', async () => {
+        const r = await run(`printf 'A\\377B' | iconv -f UTF-8 -t UTF-8 -o nodir/out.txt`);
+        expect(r.code).toBe(1);
+        expect(r.err ?? '').not.toMatch(/not supported/);
+    });
 });
 
 // X007: split -n N cuts equal chunks of floor(size/N) bytes (at least one) and the last takes the rest; the sizes below are GNU split 8.32's own.

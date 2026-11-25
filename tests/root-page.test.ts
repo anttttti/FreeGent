@@ -18,4 +18,10 @@ describe('rootPageOf', () => {
         expect(rootPageOf(['index.htm', 'index.html'])).toBe('index.html');
         expect(rootPageOf(['index.htm'])).toBe('index.htm');
     });
+    it('a page whose name only starts with "test" is a page, and the agent\'s own pages are set aside before counting (review of dde5141)', () => {
+        expect(rootPageOf(['testimonials.html'])).toBe('testimonials.html');
+        expect(rootPageOf(['game.html', 'test_page.html'])).toBe('game.html');
+        expect(rootPageOf(['a.html', 'b.html'])).toBe(null);
+        expect(rootPageOf(['test_page.html'])).toBe(null);
+    });
 });

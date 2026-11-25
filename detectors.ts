@@ -765,5 +765,10 @@ export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(
 export function rootPageOf(names: string[]): string | null {
     const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
     // index.html before index.htm (review of c8ec6fd)
-    return roots.find(n => /^index\.html$/i.test(n)) ?? roots.find(n => /^index\.htm$/i.test(n)) ?? (roots.length === 1 && !/^(?:test|tmp|temp|debug|scratch|repro)[\w.-]*\.html?$|[_-]test\.html?$/i.test(roots[0]) ? roots[0] : null);
+    const index = roots.find(n => /^index\.html$/i.test(n)) ?? roots.find(n => /^index\.htm$/i.test(n));
+    if (index) return index;
+    // The agent's own pages (test_page.html, scratch.html, flatten_test.html) are not the project's: of what is left exactly one page is the project's. A name that only starts with
+    // the letters (`testimonials.html`) is a page (review of dde5141).
+    const own = roots.filter(n => !/^(?:test|tmp|temp|debug|scratch|repro)(?:[_.-][\w.-]*)?\.html?$|[_-]test\.html?$/i.test(n));
+    return own.length === 1 ? own[0] : null;
 }
