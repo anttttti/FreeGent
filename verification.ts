@@ -59,7 +59,8 @@ function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?:
     if (call.name === 'execute_code') {
         if (Array.isArray(r.files_written) && r.files_written.length) {
             const files = r.files_written.filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
-            return { changed: files.length > 0, files };
+            const gone = Array.isArray(r.files_deleted) && r.files_deleted.some((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
+            if (files.length || !gone) return { changed: files.length > 0, files };   // only scratch files written, but a project file removed: fall through to the deletion
         }
         // The browser Local Sandbox reports what a command deleted (files_deleted): a change, and a deletion on purpose (codex R1124).
         if (Array.isArray(r.files_deleted) && r.files_deleted.length) {
@@ -102,7 +103,7 @@ function _commands(code: string): string[] {
 }
 // The check commands of `code`: the ones that run a runner (not test discovery, codex R977).
 function _checkCommands(code: string): string[] {
-    return _commands(code).filter(c => c && !/\b(?:vitest|jest)\s+(?:list\b|(?:\S+\s+)*--(?:listTests|list)\b)/.test(c) && CHECK_AT_START_RE.test(c));
+    return _commands(code).filter(c => c && !/\b(?:vitest|jest)\s+(?:list(?=\s|$)|(?:\S+\s+)*--(?:listTests|list)(?=[\s=]|$))/.test(c) && CHECK_AT_START_RE.test(c));
 }
 export function isCheckCommand(code: string): boolean { return _checkCommands(code).length > 0; }
 function _isCheckCall(call: any): boolean {

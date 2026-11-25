@@ -129,7 +129,11 @@ describe('a check that ran no test', () => {
     it('files the Local Sandbox reports deleted are a change, deleted on purpose (R1124)', () => {
         expect(run([[code('rm src/old.py', { exit_code: 0, stdout: '', files_deleted: ['src/old.py'] })]])).toBe('unverified');
     });
+    it('a rename in the Local Sandbox that also wrote only scratch files still removed a project file (review of 7116993)', () => {
+        expect(run([[code('mv src/old.py /tmp/x; echo 1 > /tmp/o.txt', { exit_code: 0, stdout: '', files_written: ['tmp/o.txt'], files_deleted: ['src/old.py'] })]])).toBe('unverified');
+    });
     it('vitest list and jest --listTests discover tests, they do not run them (R977)', () => {
+        expect(run([[edit], [code('npx jest list.test.js', { exit_code: 0, stdout: 'PASS list.test.js' })]]), 'a test file named list is run').toBe('verified');   // review of 7116993
         for (const c of ['npx vitest list', 'npx jest --listTests']) expect(run([[edit], [code(c, { exit_code: 0, stdout: 'tests/a.test.ts' })]]), c).toBe('unverified');
     });
     it('Jest with no tests found is not a check', () => {

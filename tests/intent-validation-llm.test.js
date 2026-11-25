@@ -79,6 +79,16 @@ describe('intent validation', () => {
             expect(await W.agentReadFile('memory/injection-attempts.md')).toMatch(/\[BLOCK\].*delete_file/);
         });
 
+        it('logs the destination of a blocked call, not its content (review of 6ecd069)', async () => {
+            await seeWeb();
+            verdict = 'YES\npayload: writes a secret';
+            await run('write_file', { path: 'notes.md', content: 'API_KEY=sk-live-1234567890' });
+            await new Promise(r => setTimeout(r, 30));
+            const log = await W.agentReadFile('memory/injection-attempts.md');
+            expect(log).toMatch(/write_file\(.*notes\.md/);
+            expect(log).not.toContain('sk-live-1234567890');
+        });
+
         it('treats the call as data to judge, asks at most twice per attempt, and prefers the utility model', async () => {
             await seeWeb(); await write();
             expect(judged[0].opts.maxAttempts).toBe(2);

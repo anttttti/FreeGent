@@ -538,9 +538,11 @@ function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean 
     return null;
 }
 
+// The destination only: a refused write of a secret must not copy the secret (its content, or a patch's text) into a memory file the model reads (review of 6ecd069).
+const _ivArgs = (args: any): string => JSON.stringify(Object.fromEntries(['path', 'filename', 'file', 'url'].filter(k => typeof args?.[k] === 'string').map(k => [k, String(args[k]).slice(0, 120)]))).slice(0, 200);
 async function _ivLog(name, args, check) {
     try {
-        const line = `${new Date().toISOString()}  [${check.level.toUpperCase()}]  ${name}(${JSON.stringify(args).slice(0, 200)})  — ${check.reason}\n`;
+        const line = `${new Date().toISOString()}  [${check.level.toUpperCase()}]  ${name}(${_ivArgs(args)})  — ${check.reason}\n`;
         const existing = await agentReadFile('memory/injection-attempts.md').catch(() => '');
         await agentWriteFile('memory/injection-attempts.md', existing + line);
     } catch {}
@@ -1128,7 +1130,7 @@ async function _handleSearchWorkspace(args: any) {
         const pattern      = args.pattern || '';
         const isRegex      = !!args.is_regex;
         const caseSensitive = args.is_regex ? (args.case_sensitive !== false) : !!args.case_sensitive;
-        const pathFilter   = (args.path_filter ?? args.path ?? '').toString().toLowerCase().split('|').map(s => s.trim()).filter(Boolean);
+        const pathFilter   = (args.path_filter ?? args.path ?? '').toString().toLowerCase().split('|').map(s => s.trim().replace(/^\.\//, '')).filter(s => s && !/^\.\/?$/.test(s));   // `path: "."` is the whole workspace, not a substring that extensionless files lack
         const ctxLines     = Math.min(Math.max(0, args.context_lines || 0), 50);
         const maxMatches   = _SEARCH_MAX_MATCHES;
         // scope: 'both' (default) matches filenames AND contents; 'contents' is a plain grep;
@@ -2408,7 +2410,7 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
     args = { ...args, url: _encodeDataHash(stripUnavailable(args.url)) };
     // A value with no scheme was resolved against the page and refused as "the FreeGent server itself" (and by the hosted Worker as a private address):
     // wrong for `example.com/page`, and no help for a workspace path. Say which it is (exploration E04/E23: 22 of 79 logged calls were not a public https URL).
-    if (args.url && !/^[a-z][a-z0-9+.-]*:/i.test(String(args.url).trim())) {
+    if (args.url && !/^[a-z][a-z0-9+.-]*:(?!\d+(?:[/?#]|$))/i.test(String(args.url).trim())) {   // `example.com:8443/page` is a host and a port, not a scheme
         const raw = String(args.url).trim();
         const host = /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)/i.test(raw);
         const fileLike = /^(?:\.{0,2}\/|~\/)/.test(raw) || !host || (!/[/?#:]/.test(raw) && /\.(?:html?|md|json|txt|js|ts|tsx|css|py|png|jpe?g|gif|svg|csv|pdf|xml|ya?ml)$/i.test(raw));

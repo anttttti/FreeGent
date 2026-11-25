@@ -204,6 +204,9 @@ describe('file tools', () => {
         expect(await hits({ pattern: 'foo', scope: 'names' })).toEqual(['doc/foo.md']);
         expect(await hits({ pattern: 'def \\w+\\(', is_regex: true, scope: 'contents' })).toEqual(['src/alpha.py']);
         expect(await hits({ pattern: 'o', scope: 'contents', path_filter: 'src/|doc/' })).toEqual(['doc/foo.md', 'src/alpha.py']);
+        await W.agentWriteFile('Makefile', 'foo: all\n');
+        expect(await hits({ pattern: 'foo', scope: 'contents', path: '.' })).toContain('Makefile');   // "." and "./src/" mean the workspace and src/, not a substring (review of 16a8b2e)
+        expect(await hits({ pattern: 'foo', scope: 'contents', path: './src/' })).toEqual(['src/alpha.py']);
     });
 });
 

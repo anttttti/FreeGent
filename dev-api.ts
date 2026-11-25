@@ -884,7 +884,8 @@ export function createDevApi(opts: DevApiOptions) {
             };
             await walk(tmpDir);
             // Files the run removed or renamed: the browser must not keep them.
-            const filesDeleted = [...sent].filter(([rel]) => !seen.has(rel)).map(([, v]) => v.name);
+            // A renamed file whose new name was left out of the copy-back (budget, size) must not also lose its old one: while anything was skipped, no removal is reported.
+            const filesDeleted = skipped.length ? [] : [...sent].filter(([rel]) => !seen.has(rel)).map(([, v]) => v.name);
             jsonSend(res, { stdout, stderr, exit_code: exitCode, files_written: filesWritten, ...(filesDeleted.length ? { files_deleted: filesDeleted } : {}), ...(skipped.length ? { files_skipped: skipped } : {}) });
         } catch (err: any) {
             jsonErr(res, 500, String(err));

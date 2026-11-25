@@ -336,6 +336,12 @@ describe('dev API over HTTP', () => {
             expect(out.files_skipped).toBeUndefined();
         });
 
+        it('a removal is not reported while a file was left out of the copy-back, so a rename to a skipped name keeps the old file (review of 1ce6f86)', async () => {
+            const out = await run('head -c 40000000 /dev/zero | tr "\\0" b > c1.txt; head -c 40000000 /dev/zero | tr "\\0" c > c2.txt; rm b1.txt b2.txt', { 'b1.txt': 'one', 'b2.txt': 'two' });
+            expect(out.files_skipped).toHaveLength(1);
+            expect(out.files_deleted).toBeUndefined();
+        });
+
         it('reports removed and renamed files', async () => {
             const out = await run('rm gone.txt; mv from.txt to.txt', { 'gone.txt': 'a', 'from.txt': 'b', 'keep.txt': 'c' });
             expect(out.files_deleted.sort()).toEqual(['from.txt', 'gone.txt']);

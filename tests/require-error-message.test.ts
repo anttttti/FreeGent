@@ -33,3 +33,11 @@ describe('a relative import from a script outside the working directory', () => 
         expect(e.message).toContain("resolves from the importing file's directory (/tmp), not from the working directory (/workspace). The file is at /workspace/src/render.js");
     });
 });
+
+describe('a module that is not found', () => {
+    it("carries code MODULE_NOT_FOUND, so a script's optional-require fallback runs (review of ec38612)", () => {
+        const e = load('require("sharp");');
+        expect(e).toBeTruthy();
+        expect(e.code).toBe('MODULE_NOT_FOUND');
+    });
+});
