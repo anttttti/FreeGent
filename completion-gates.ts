@@ -110,7 +110,12 @@ export function writesTaskFile(call: any): boolean {
     return name === 'execute_code' && /(?:>|\btee\b)[^\n]*fg-tasks\/\d+-/.test(args.replace(/\\n/g, '\n'));
 }
 /** A task file whose criteria cannot be checked: no "## Acceptance Criteria" heading, or no "- [ ]" item at all (a plain bullet cannot be ticked). */
-export const lacksCriteria = (text: string): boolean => !/^## Acceptance Criteria[ \t]*$/im.test(text) || !/^\s*[-*]\s*\[[ xX]\]/m.test(text);
+export const lacksCriteria = (text: string): boolean => {
+    const h = /^## Acceptance Criteria[ \t]*$/im.exec(text);
+    if (!h) return true;
+    const rest = text.slice(h.index + h[0].length), end = rest.search(/^## /m);   // the items of that section: a checkbox under another heading is not a criterion
+    return !/^\s*[-*]\s*\[[ xX]\]/m.test(end < 0 ? rest : rest.slice(0, end));
+};
 
 async function planCoverage(c: GateContext): Promise<GateHit | null> {
     if (c.ps.planCover || !c.taskText || !c.planning) return null;

@@ -196,6 +196,13 @@ describe('edit_range (experiment)', () => {
         expect((await run('replace_in_file', { path: 'r.txt', new_string: 'x' })).error).toMatch(/old_string is empty/);
         expect(files.get('r.txt')).toBe(LONG);
     });
+    it('deletes a range with an empty new_string: the identical-text refusal does not see the range yet (Codex review of 3da162b)', async () => {
+        files.set('r.txt', LONG);
+        await run('read_file', { path: 'r.txt' });
+        const r = await run('replace_in_file', { path: 'r.txt', start_line: 3, end_line: 4, new_string: '' });
+        expect(r.error).toBeUndefined();
+        expect(files.get('r.txt')).toBe(LONG.replace('line 3\nline 4', ''));
+    });
     it('is off by default: the same call is an empty old_string', async () => {
         delete process.env.FG_EXPERIMENTS;
         files.set('r.txt', LONG);

@@ -27,7 +27,7 @@ The first stable release. FreeGent is an agentic AI platform for chat and cowork
 ### Known limits
 
 - API keys typed into Settings are stored in the browser's `localStorage` in plain text.
-- JavaScript and Python runs in the browser do not see workspace files larger than about 10 MB (the Local provider: 1 MB). The in-browser bash has no such limit.
+- JavaScript and Python runs in the browser do not see workspace files larger than about 10 MB (the Local provider: 1 MB). A JavaScript run also gets only about 24 MB of the project in all: the files its code names first, then the smallest; the ones left out are listed and fail with `EIO` when read. The in-browser bash has no such limit.
 - Without bubblewrap (macOS, Windows), local bash runs as you; tool approval then defaults to asking before each command.
 - NVIDIA, Kilo and Brave search do not allow browser calls, so they need the Routed level on a hosted page.
 - Free tiers have their own rate limits; the rotation works around them but cannot remove them.

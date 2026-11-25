@@ -1950,7 +1950,7 @@ async function _handleReplaceInFile(args, context) {
     if (!args.old_string && !_rangeMode) {
         return { error: `replace_in_file: old_string is empty. To REPLACE text, set old_string to the exact lines to find. To INSERT text, include the surrounding lines as old_string and repeat them plus your addition in new_string. Example — insert after a function signature: old_string='def foo():\\n    pass', new_string='def foo():\\n    # new line\\n    pass'. Read the file first to get exact content.` };
     }
-    if (!_assist && args.old_string === args.new_string) {
+    if (!_assist && !_rangeMode && args.old_string === args.new_string) {   // a range delete has an empty new_string and, until the range is read, an empty old_string
         return { error: `replace_in_file: old_string and new_string are identical — this would change nothing. If the text is already what you want, the edit is already in the file: read those lines to confirm instead of repeating it; otherwise change the part of new_string that must differ.` };
     }
     const nulNew = _nulReport(args.new_string);

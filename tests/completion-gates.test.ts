@@ -168,6 +168,8 @@ describe('planned_tasks_missing: files the request names that no task covers', (
         expect(lacksCriteria('# A\n## Acceptance Criteria\n- [x] works\n')).toBe(false);
         expect(lacksCriteria('# A\n## Acceptance Criteria\n- works\n')).toBe(true);
         expect(lacksCriteria('# A\n## Execution Plan\n- [ ] works\n')).toBe(true);
+        expect(lacksCriteria('# A\n## Acceptance Criteria\n\n## Log\n- [ ] later\n')).toBe(true);   // a checkbox under another heading is not a criterion (Codex review of 3da162b)
+        expect(lacksCriteria('# A\n## Acceptance Criteria\n- [ ] works\n## Log\n- done\n')).toBe(false);
     });
     it('is silent when every file is covered, outside the planning turn, or without a board', async () => {
         expect(await runCompletionGates(planning({ taskText: async () => 'calc.js test_calc.mjs index.html' }))).toBeNull();

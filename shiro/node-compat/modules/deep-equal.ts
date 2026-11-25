@@ -28,6 +28,7 @@ export function deepEqual(a: any, b: any, strict: boolean, seen: [any, any][] = 
     return true;
   }
   if (ArrayBuffer.isView(a)) {
+    if (a instanceof DataView) { a = new Uint8Array(a.buffer, a.byteOffset, a.byteLength); b = new Uint8Array((b as DataView).buffer, (b as DataView).byteOffset, (b as DataView).byteLength); }   // a DataView has no length: two with different bytes compared equal
     const x = a as any, y = b as any;
     if (x.length !== y.length) return false;
     for (let i = 0; i < x.length; i++) if (!deepEqual(x[i], y[i], strict, seen)) return false;
