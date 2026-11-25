@@ -199,6 +199,7 @@ async function _restoreTurnWorkspace(o: Store.TurnOrigin): Promise<string> {
             + (r.createdNotRemoved ? '; the workspace has too many files to find the ones the reply created, so those were left' : '')
             + (r.kept ? `; ${r.kept} file${r.kept === 1 ? '' : 's'} that are not in the copy were not removed (they are older than it)` : '')
             + (r.ignoreRulesChanged ? '; the ignore rules changed meanwhile, so files they now hide could not be found' : '')
+            + (r.skippedOutside?.length ? `; ${r.skippedOutside.length} file${r.skippedOutside.length === 1 ? '' : 's'} behind a link that leaves the workspace were not touched` : '')
             + (r.skippedLarge.length ? `; ${r.skippedLarge.length} large file${r.skippedLarge.length === 1 ? '' : 's'} left as they are` : '');
     } catch (e: any) { return `files NOT restored: ${e?.message ?? e}`; }
 }

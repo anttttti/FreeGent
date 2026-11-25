@@ -136,7 +136,7 @@ export function sandboxCspMeta(level: PrivacyLevel = getPrivacyLevel(), pageOrig
         `media-src data: blob: ${_LOCAL_HOSTS}${page}`,
         `font-src data: blob: ${_LOCAL_HOSTS}${page}`,
         `frame-src data: blob: ${_LOCAL_HOSTS}${page}`,
-        `form-action ${_LOCAL_HOSTS}${page}`,   // does not fall back to default-src: a form could post workspace data to any host (codex R913)
+        `form-action ${_LOCAL_HOSTS}${(() => { try { return page && isLocalAddress(new URL(pageOrigin).hostname) ? page : ''; } catch { return ''; } })()}`,   // a public host serving the app is not this machine (review of de2c857); does not fall back to default-src: a form could post workspace data to any host (codex R913)
     ].join('; ');
     return `<meta http-equiv="Content-Security-Policy" content="${src}">`;
 }

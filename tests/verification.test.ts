@@ -135,6 +135,10 @@ describe('a check that ran no test', () => {
     it('a command that timed out after writing a file is still a change (review of 7bd4d5d)', () => {
         expect(run([[code('python3 slow.py', { error: 'timed out', exit_code: 124, stdout: '', files_written: ['src/out.py'] })]])).toBe('unverified');
     });
+    it('go test ./... with one package without tests and one that passed is a run (review of a15a727)', () => {
+        const out = '?   \texample/cmd\t[no test files]\nok  \texample/pkg\t0.003s\n';
+        expect(run([[edit], [code('go test ./...', { exit_code: 0, stdout: out })]])).toBe('verified');
+    });
     it('npm run build is a check (review of 6cd1c5b)', () => {
         expect(run([[edit], [code('npm run build', { exit_code: 0, stdout: 'built in 2s' })]])).toBe('verified');
         expect(run([[edit], [code('npm run build', { exit_code: 1, stdout: 'error' })]])).toBe('failed_verification');

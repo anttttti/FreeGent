@@ -83,6 +83,12 @@ describe('the Local-privacy CSP allows the pinned 7-Zip runtime (codex R100-06)'
 });
 
 describe('sandboxCspMeta / parsePrivacyLevel', () => {
+    it('a public page origin is not a form target at the local level; a local one is (review of de2c857)', () => {
+        const action = (origin: string) => /form-action ([^;"]*)/.exec(sandboxCspMeta('local', origin))![1];
+        expect(action('https://freegent.ai')).not.toContain('freegent.ai');
+        expect(action('http://192.168.1.5:5000')).toContain('192.168.1.5:5000');
+        expect(sandboxCspMeta('local', 'https://freegent.ai')).toContain('img-src data: blob: http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:* https://freegent.ai');   // other kinds keep the page
+    });
     it('only the local level adds a CSP', () => {
         expect(sandboxCspMeta('routed')).toBe('');
         expect(sandboxCspMeta('provider')).toBe('');

@@ -626,7 +626,7 @@ async function gate_test_runner(taskPath, content) {
                 if (parts.length && Date.now() - t0 > _QA_TEST_BUDGET_MS) { notRun += testFiles.length - i; break; }
                 parts.push(await one(_testCommand(testFiles.slice(i, i + _QA_TEST_CHUNK))));
             }
-            const bad = parts.find(r => r.exit_code !== 0);
+            const bad = parts.find(r => typeof r.exit_code === 'number' && r.exit_code !== 0) ?? parts.find(r => r.exit_code !== 0);   // a failing test outranks a sandbox error in another batch (review of b0c3c0f)
             res = { stdout: parts.map(r => r.stdout || '').join(''), stderr: parts.map(r => r.stderr || '').join(''), error: parts.map(r => r.error).filter(Boolean).join('\n') || undefined,
                 exit_code: bad ? bad.exit_code : 0 };
         }
@@ -933,8 +933,8 @@ const _SOFT_GATES = new Set(['test-runner', 'page-check', 'acceptance-review', '
 export async function forceTaskStatus(taskPath: string, toStatus: string, because: string): Promise<void> {
     const to = canonTaskStatus(toStatus);
     await appendGateNote(taskPath, `## Moved by the user over the gates (${new Date().toISOString().slice(0, 16)}Z)\n${because.slice(0, 500)}`);
+    await setTaskStatus(taskPath, to);   // first: a numbered task file without front matter gets its front matter here, and `qa` can then be written into it (review of b0c3c0f)
     if (to === 'done') { try { await agentWriteFile(taskPath, _setFrontmatterField(await agentReadFile(taskPath), 'qa', 'unverified')); } catch {} }
-    await setTaskStatus(taskPath, to);
     try { await refreshTasks(); } catch {}
 }
 

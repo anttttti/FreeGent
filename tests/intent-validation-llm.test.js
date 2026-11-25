@@ -36,6 +36,7 @@ describe('intent validation', () => {
     it('the sensitive-path guard covers append_file and replace_in_file', async () => {
         files.set('.env', 'A=1');
         expect((await run('append_file', { path: '.env', content: 'B=2' })).error).toMatch(/Sensitive path/);
+        for (const args of [{ path: '".env"' }, { path: '  .env ' }, { filename: '.env' }, { file: './.env' }]) expect((await run('write_file', { ...args, content: 'A=1' })).error, JSON.stringify(args)).toMatch(/Sensitive path/);   // review of de2c857
         expect((await run('replace_in_file', { path: '.env', old_string: 'A=1', new_string: 'A=2' })).error).toMatch(/Sensitive path/);
         expect(files.get('.env')).toBe('A=1');
     });

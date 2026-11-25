@@ -392,7 +392,7 @@ async function _setupOnce(opts: Record<string, any> = {}): Promise<void> {
     // tracking misses changes a worker makes with shell commands (v0.59 sphinx-8595 rewrote
     // tests/conftest.py that way and shipped it). null when the workspace is not a git repo.
     (globalThis as any).fgChangedFiles = async (): Promise<string[] | null> => {
-        const r: any = await _nativeExecFn('bash', 'git status --porcelain --untracked-files=all 2>/dev/null | head -500');
+        const r: any = await _nativeExecFn('bash', 'git -c core.fsmonitor=false status --porcelain --untracked-files=all 2>/dev/null | head -500'   /* a repository's own fsmonitor hook is not run (review of a15a727) */);
         if (r?.exit_code !== 0 || !r.stdout) return r?.exit_code === 0 ? [] : null;
         return String(r.stdout).split('\n').filter(Boolean)
             .map(l => l.slice(3).replace(/^.* -> /, '').replace(/^"|"$/g, ''));

@@ -39,7 +39,8 @@ export function secretValues(text: string): string[] {
         const root = JSON.parse(String(text ?? ''));
         const walk = (node: unknown, key: string, depth: number) => {
             if (depth > 8) return;
-            if (typeof node === 'string') { if ((_SECRET_KEY_RE.test(key) && node.length >= 6 && !_isPlace(node, key)) || _looksRandom(node)) add(node); }
+            if (typeof node === 'string') { for (const m of node.matchAll(/:\/\/[^\s:/@]*:([^\s@/]+)@/g)) add(m[1]);   // the password of a connection URL in a JSON value, as in a .env line (review of a15a727)
+                if ((_SECRET_KEY_RE.test(key) && node.length >= 6 && !_isPlace(node, key)) || _looksRandom(node)) add(node); }
             else if (Array.isArray(node)) for (const x of node) walk(x, key, depth + 1);
             else if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, k, depth + 1);
         };

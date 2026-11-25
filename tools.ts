@@ -500,7 +500,9 @@ function _ivPathCheck(name: string, args: any): { level: string; reason: string;
     if (!_IV_PATH_TOOLS.has(name)) return null;
     // apply_patch writes the paths in its diff headers as well as args.path.
     const patch = name === 'apply_patch' ? String(args?.patch ?? args?.diff ?? args?.content ?? '') : '';
-    const paths = [String(args?.path || ''), ...[...patch.matchAll(/^(?:---|\+\+\+) (?:[ab]\/)?(\S+)/gm)].map(m => m[1]).filter(p => p !== '/dev/null')];
+    // The names the writers accept, raw and as they normalise them (quotes, whitespace, ./): the check judges the file that is opened, not only the spelling sent (review of de2c857).
+    const given = [args?.path, args?.filename, args?.file, args?.filepath].filter((p): p is string => typeof p === 'string' && !!p);
+    const paths = [...given, ...given.map(_normToolPath), ...[...patch.matchAll(/^(?:---|\+\+\+) (?:[ab]\/)?(\S+)/gm)].map(m => m[1]).filter(p => p !== '/dev/null')];
     for (const path of paths) {
         if (_IV_PATH_TRAVERSAL_RE.test(path)) return { level: 'block', reason: `Path traversal in ${name}: ${path}` };
         if (_IV_SENSITIVE_PATH.test(path)) return { level: 'block', reason: `Sensitive path in ${name}: ${path}` };

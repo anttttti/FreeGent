@@ -14,4 +14,8 @@ describe('rootPageOf', () => {
         expect(rootPageOf(['flatten_test.html'])).toBe(null);
         expect(rootPageOf(['test_page.html', 'index.html'])).toBe('index.html');
     });
+    it('index.html is preferred to index.htm (review of c8ec6fd)', () => {
+        expect(rootPageOf(['index.htm', 'index.html'])).toBe('index.html');
+        expect(rootPageOf(['index.htm'])).toBe('index.htm');
+    });
 });

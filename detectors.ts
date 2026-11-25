@@ -764,5 +764,6 @@ export function isScratchPath(p: string): boolean { return SCRATCH_PATH_RE.test(
 // (kanbanflow set 3: `test_page.html`, written to try a function, was "the only page", and its error refused a task's `done` for 13 turns).
 export function rootPageOf(names: string[]): string | null {
     const roots = names.filter(n => /^[^/]+\.html?$/i.test(n));
-    return roots.find(n => /^index\.html?$/i.test(n)) ?? (roots.length === 1 && !/^(?:test|tmp|temp|debug|scratch|repro)[\w.-]*\.html?$|[_-]test\.html?$/i.test(roots[0]) ? roots[0] : null);
+    // index.html before index.htm (review of c8ec6fd)
+    return roots.find(n => /^index\.html$/i.test(n)) ?? roots.find(n => /^index\.htm$/i.test(n)) ?? (roots.length === 1 && !/^(?:test|tmp|temp|debug|scratch|repro)[\w.-]*\.html?$|[_-]test\.html?$/i.test(roots[0]) ? roots[0] : null);
 }

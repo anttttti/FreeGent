@@ -119,7 +119,8 @@ export function checkDidNotRun(call: any): boolean {
     // A failing run that happens to print "not found" in a test's own message is a failure; only the
     // runner's own "nothing collected" banners count, and for exit 0 only when no test ran.
     if ((r.exit_code === 4 || r.exit_code === 5) && /\b(?:pytest|py\.test)\b/.test(String(call.args?.code ?? ''))) return true;
-    return NO_TESTS_RE.test(out) && !/\b[1-9]\d* (?:passed|failed|errors?)\b/.test(out);
+    // `go test ./...` prints `? pkg [no test files]` for a package without tests and `ok  pkg` for one that ran: a passing package makes the run a run (review of a15a727).
+    return NO_TESTS_RE.test(out) && !/\b[1-9]\d* (?:passed|failed|errors?)\b/.test(out) && !/^ok\s+\S+/m.test(out);
 }
 /** A check_page result as a check. Pass: the page loaded, reported no errors, drew something, met every expectation. Fail: errors, a blank
  *  page, an unmet expectation, or the refusal of a page that crashed the tab. Neither: the page did not run, or the call itself failed

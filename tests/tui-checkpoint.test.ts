@@ -114,6 +114,16 @@ describe('rewind never writes through a link the turn put in place (overnight ex
         expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('ORIGINAL-B');
         expect(r.skippedOutside).toEqual([join('dir', 'c.txt')]);
     });
+    it('a linked parent does not get folders made through it outside the workspace (review of a15a727)', async () => {
+        const root = tmp('fg-ws-'), store = tmp('fg-ck-'), outside = tmp('fg-out-');
+        mkdirSync(join(root, 'dir', 'sub'), { recursive: true }); writeFileSync(join(root, 'dir', 'sub', 'c.txt'), 'ORIGINAL-C');
+        const snap = await takeSnapshot(root, store, '1'); await turnStarts();
+        mkdirSync(join(outside, 'dir'));
+        rmSync(join(root, 'dir'), { recursive: true }); symlinkSync(join(outside, 'dir'), join(root, 'dir'));
+        const r = await restoreSnapshot(root, snap);
+        expect(existsSync(join(outside, 'dir', 'sub'))).toBe(false);
+        expect(r.skippedOutside).toEqual([join('dir', 'sub', 'c.txt')]);
+    });
     it('does not remove a file behind a linked parent that Git still lists as created since the copy (Y024)', async () => {
         const { execFileSync } = await import('node:child_process');
         const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });

@@ -131,6 +131,14 @@ describe('test-runner gate', () => {
         const r = await W.transitionTask(TASK, 'done');
         expect(r.transitioned).toBe(true);
     });
+    it('a failing assertion in a later batch outranks a sandbox error in the first (review of b0c3c0f)', async () => {
+        for (const n of ['test_a.js', 'test_b.js', 'test_c.js', 'test_d.js']) files[n] = 'x';
+        let call = 0;
+        W.executeToolAsync = async () => (++call === 1 ? { exit_code: null, error: 'sandbox HTTP error' } : { stdout: '== test_d.js (exit 1)\nAssertionError: 1 !== 2\nFAILED: test_d.js\n', stderr: '', exit_code: 1 });
+        const r = await W.transitionTask(TASK, 'done');
+        expect(r.transitioned).toBe(false);
+        expect(r.reason).toMatch(/test_d\.js/);
+    });
     it('a missing project entry point (test/runner.js) is a failure, not a missing package (review of 0e6582a)', async () => {
         files['test_x.js'] = 'x';
         W.executeToolAsync = async () => ({ stdout: "== test_x.js (exit 1)\nnode: Cannot find module 'test/runner.js'\nFAILED: test_x.js\n", stderr: '', exit_code: 1 });

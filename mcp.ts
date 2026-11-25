@@ -14,6 +14,7 @@
 // Server entries hold their auth headers the way custom models hold their keys: in
 // localStorage, never in profiles.
 
+import { isFetchAllowActive } from './fetch-allow.js';
 import { resolveProxy } from './proxy.js';
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
@@ -120,7 +121,8 @@ function _proxyUrl(): string { return resolveProxy('local'); }
 
 async function _send(url: string, headers: Record<string, string>, body: string, viaProxy: boolean): Promise<Response> {
     const signal = combineSignals(activeAbortController?.signal, _TIMEOUT_MS)!;
-    if (!viaProxy) return fetch(url, { method: 'POST', headers, body, signal });
+    // Under --fetch-allow a redirect would leave the allowed origins unchecked: it is refused, not followed (review of a15a727).
+    if (!viaProxy) return fetch(url, { method: 'POST', headers, body, signal, ...(isFetchAllowActive() ? { redirect: 'error' as const } : {}) });
     return fetch(_proxyUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

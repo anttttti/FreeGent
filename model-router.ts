@@ -20,6 +20,7 @@
 
 import { isStaticHost } from './static-hosts.js';
 import { isCustomEndpoint } from './payload-builder.js';
+import { isLocalAddress } from './privacy.js';
 
 // ── Endpoint cooldown state ──────────────────────────────────────────────────
 // Shared by all LLM callers (main loops, compaction, workers).
@@ -439,7 +440,11 @@ function _customEndpoint(model: string, hintProvider: string): any {
     // proxy:true routes through the same-origin /api/proxy to avoid CORS in the browser.
     // In headless/Node.js mode there is no browser CORS restriction and no proxy server,
     // so skip it to fetch the LLM endpoint directly.
-    const useProxy = !window._fgHeadless;
+    // A server on this machine or LAN is not reachable from a hosted Worker, which would also have read the key and the prompt before refusing the target: from a static host
+    // it is called directly. The local dev server's own /api/proxy can reach it, so there it stays proxied (review of 9431df2).
+    const _hostedPost = (() => { try { return isStaticHost(window.location.hostname) && !!(typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : ''); } catch { return false; } })();
+    const _localTarget = (() => { try { return isLocalAddress(new URL(baseUrl).hostname); } catch { return false; } })();
+    const useProxy = !window._fgHeadless && !(_hostedPost && _localTarget);
     return { provider, url, key, model, proxy: useProxy };
 }
 

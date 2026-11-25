@@ -24,6 +24,7 @@ describe('which files and values', () => {
         expect(v).toContain('Hunter2pass');
         for (const no of ['production', '3000', 'false', 'localhost', 'commented']) expect(v).not.toContain(no);
         expect(secretValues('//registry.npmjs.org/:_authToken=npm_A1b2C3d4E5f6G7h8')).toContain('npm_A1b2C3d4E5f6G7h8');
+        expect(secretValues(JSON.stringify({ DATABASE_URL: 'postgres://app:S3cretPw@db.example/app' }))).toContain('S3cretPw');   // a connection URL inside JSON (review of a15a727)
         expect(secretValues('machine api.host login me password s3cr3t-pw')).toContain('s3cr3t-pw');
     });
 });

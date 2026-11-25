@@ -101,6 +101,14 @@ export async function restoreSnapshot(root: string, snap: Snapshot): Promise<Res
     const behindLink = async (abs: string): Promise<boolean> => {
         try { const p = await realpath(dirname(abs)); return p !== rootReal && !p.startsWith(rootReal + sep); } catch { return true; }
     };
+    // The nearest existing ancestor of a path, resolved: outside the workspace when a link on the way leads out.
+    const ancestorOutside = async (abs: string): Promise<boolean> => {
+        let d = dirname(abs);
+        for (;;) {
+            try { const p = await realpath(d); return p !== rootReal && !p.startsWith(rootReal + sep); }
+            catch { const n = dirname(d); if (n === d) return true; d = n; }
+        }
+    };
     const rulesChanged = snap.ignoreRules !== undefined && await ignoreRulesOf(root) !== snap.ignoreRules;
     const now = await listFiles(root, { maxEntries: RESTORE_LIST_LIMIT, deadlineMs: 15_000, skipDirs: SKIP_DIRS, includeIgnored: rulesChanged });
     if (rulesChanged) result.ignoreRulesChanged = true;
@@ -129,6 +137,8 @@ export async function restoreSnapshot(root: string, snap: Snapshot): Promise<Res
             same = a.size === b.size && (await readFile(from)).equals(await readFile(to));
         } catch {}
         if (same) continue;
+        // Folders are made only where they would be inside the workspace: a linked parent sent `mkdir -p` outside it (review of a15a727).
+        if (await ancestorOutside(to)) { (result.skippedOutside ??= []).push(rel); continue; }
         await mkdir(dirname(to), { recursive: true });
         // The copy goes into the workspace, not through a link the turn put in its place: a symlink or hard link at the path would send the write to a file
         // outside it, and so would a linked parent directory (overnight exploration E037, E039).

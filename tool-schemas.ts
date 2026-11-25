@@ -291,7 +291,7 @@ const CHECK_PAGE_TOOL_SPEC = {
     parameters: {
         type: 'object',
         properties: {
-            path:    { type: 'string', description: 'The HTML file, e.g. "index.html".' },
+            path:    { type: 'string', description: 'The HTML file, e.g. "index.html". Omit it to check the root index.html.' },
             actions: {
                 type: 'array',
                 description: 'Steps run in order after load. Each is one of {"click": "<CSS selector>"}, {"type": "<CSS selector of an input, textarea or editable element>", "text": "abc"} (types the text with key and input events; replaces what is there unless "clear": false), {"key": "ArrowRight", "hold_ms": 500} (keydown, hold, keyup), {"wait_ms": 1000}.',
@@ -313,7 +313,7 @@ const CHECK_PAGE_TOOL_SPEC = {
                 items: { type: 'object', properties: { expr: { type: 'string' }, equals: {}, matches: { type: 'string' }, truthy: { type: 'boolean' } }, required: ['expr'] } },
             wait_ms: { type: 'number', description: 'How long to let the page run after the actions (default 1500, max 10000).' },
         },
-        required: ['path'],
+        required: [],
     },
 };
 
