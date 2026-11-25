@@ -630,8 +630,8 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
             blockedReason = (_statusBlocked?.[1] ?? _blockedLine ?? lastMsg.trim().split('\n').filter(l => l.trim()).pop() ?? '').trim().slice(0, 200)
                 || 'Task blocked — needs user input';
             // "logtool.py is missing": the task says what to write, so a file that is not there is the task's to create; the question stopped the board for the
-            // user in 5 of 8 kanbanflow set 3 `datapipe` runs and in 4 `vague` runs (a conditional "if there is an app.js"). Asked once, with the way out.
-            if (!challenged && _MISSING_FILE_RE.test(blockedReason) && /\bfiles?\b|\b[\w-]+\.[A-Za-z]{1,5}\b|\b(?:Dockerfile|Makefile|Procfile|Gemfile|Jenkinsfile|Vagrantfile)\b/i.test(blockedReason)) {   // names a file: "the API key is missing" is not this
+            // user in 5 of 8 kanbanflow set 3 `datapipe` runs and in 4 `vague` runs (a conditional "if there is an app.js"). Asked once, with the way out, and only while a turn is left to carry it (on the last turn the question is the user's: review of dde5141).
+            if (!challenged && turn < _MAX_TURNS_PER_EPISODE && _MISSING_FILE_RE.test(blockedReason) && /\bfiles?\b|\b[\w-]+\.[A-Za-z]{1,5}\b|\b(?:Dockerfile|Makefile|Procfile|Gemfile|Jenkinsfile|Vagrantfile)\b/i.test(blockedReason)) {   // names a file: "the API key is missing" is not this
                 challenged = true; blocked = false; blockedReason = '';
                 challengeNext = `You stopped to ask about a missing file: a file that the task tells you to write is yours to create, so create it and carry on. If the task only applies when that file exists, it has nothing to do: set it to done and say so. Stop for the user only for a value or decision that nothing in the workspace can give, and then end with "BLOCKED: <the one thing you need>".`;
                 continue;

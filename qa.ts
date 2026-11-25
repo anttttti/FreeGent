@@ -9,7 +9,7 @@ import { validateOutput, judgeDecision } from './step-validator.js';
 import { runtime } from './runtime.js';
 import { isCredentialPath } from './secret-egress.js';
 import { workspaceEpoch } from './exec-limits.js';
-import { noteToolStage, toolCrashCount } from './page-check-guard.js';
+import { noteToolStage, toolCrashCount, toolCallRunning, beginToolCall, endToolCall } from './page-check-guard.js';
 
 const QA_DEFAULT_GATES = {
     'todo->in-progress':      ['dependency-check', 'task-enrichment'],
@@ -924,7 +924,12 @@ async function transitionTask(taskPath, toStatus) {
         return { transitioned: false, reason: `Not marked failed yet: the last check refused done with "${_lastBounce.get(taskPath)!.slice(0, 300)}". Fix that cause and set done again. If it cannot be fixed, set failed again with the reason.` };
     }
     const wasInProgress = canonTaskStatus(parseFrontmatter(await agentReadFile(taskPath).catch(() => '')).status) === 'in-progress';
-    const r = await _transitionTask(taskPath, toStatus);
+    // A move from the board or the runner has no update_task_status call to mark: it is marked here, under the same name and label, so a crash in a gate (the tests, the page) is reported and counted
+    // like one the agent started (reviews of b0c3c0f, b1674f7, f1366cd). The agent's own call, when there is one, keeps its marker.
+    const _mark = toolCallRunning('update_task_status') || isScratchTask(taskPath) ? 0
+        : beginToolCall('update_task_status', `task:${String(taskPath).replace('fg-tasks/', '')} → ${canonTaskStatus(toStatus)}`, (globalThis as any).activeChatId ?? null);
+    let r: any;
+    try { r = await _transitionTask(taskPath, toStatus); } finally { if (_mark) endToolCall(_mark); }
     if (r.transitioned) { _lastBounce.delete(taskPath); _failChallenged.delete(taskPath); }
     else if (canonTaskStatus(toStatus) === 'done' && r.reason) _lastBounce.set(taskPath, r.reason);
     if (r.transitioned && canonTaskStatus(toStatus) === 'done') _gatesPassedDone.add(taskPath);

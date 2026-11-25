@@ -216,6 +216,7 @@ function _crashLabel(name: string, args: any): string {
 }
 
 let _lastStepSave = 0;
+let _trailingSave: ReturnType<typeof setTimeout> | null = null;
 const _LONG_TOOLS = new Set(['execute_code', 'run_workers', 'deep_research']);   // check_page saves for itself   // when a step last saved the chat (see the tool results below)
 
 // clearReplaceState: clear replace-failure tracking on the given session (or defaultSession).
@@ -668,7 +669,11 @@ async function _runToolCalls(normCalls: Array<{name: string; args: any}>, toolTa
                 // under -1 (a failed comparison cannot show that files changed), and the record carries an identity (exploration D032). A loop, not Math.max(...spread):
                 // 131,072 files threw RangeError and the guard was skipped.
                 let ws = -1;
-                try { ws = ((await agentListFiles()) || []).reduce((m: number, f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name) ? Math.max(m, Number(f.lastModified) || 0) : m, 0); } catch {}
+                try {
+                    // The newest file time and how many files there are: deleting the older file that made a command crash leaves the newest time as it was, and the corrected workspace is a new state (review of b0c3c0f).
+                    let _n = 0;
+                    ws = ((await agentListFiles()) || []).reduce((m: number, f: any) => f?.name && !/^(?:fg-tasks|memory)\//.test(f.name) ? (_n++, Math.max(m, Number(f.lastModified) || 0)) : m, 0) + _n / 1_000_000;
+                } catch {}
                 try { _same = { sig: toolSig(name, args), scripts: name === 'execute_code' && String(args?.language ?? 'bash') === 'bash' ? commandScripts(args?.code) : [], ws }; } catch {}
             }
             const _crashedAlready = _same && sameCallCrashed(_same.sig, _same.ws, _same.scripts);
@@ -2304,9 +2309,15 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // Browser chat: saved after each step, at most every 5 s. It was saved only when the turn ended, so a tab that crashed or was
         // killed mid-turn (a page under check_page that hung or ran out of memory) came back with the turn's work gone and an Autopilot
         // task's chat empty. Headless runs keep their own per-event persistence.
-        if (_s === defaultSession && !runtime.hasNativeExec && Date.now() - _lastStepSave >= 5000) {
-            _lastStepSave = Date.now();
-            try { (globalThis as any).saveHistory?.(); } catch {}
+        if (_s === defaultSession && !runtime.hasNativeExec) {
+            const _since = Date.now() - _lastStepSave;
+            if (_since >= 5000) {
+                _lastStepSave = Date.now();
+                try { (globalThis as any).saveHistory?.(); } catch {}
+            } else if (!_trailingSave) {
+                // A step inside the 5 s window was skipped with nothing to save it later: a stalled next request and a dead tab lost it (review of c639263). One save when the window ends.
+                _trailingSave = setTimeout(() => { _trailingSave = null; _lastStepSave = Date.now(); try { (globalThis as any).saveHistory?.(); } catch {} }, 5000 - _since + 50);
+            }
         }
 
         const _reactive = !(ps._postCompactionTurns ?? 0) && reactiveSkillGuidance(results.map(r => ({ name: r.name, args: r.args, result: r.result })));

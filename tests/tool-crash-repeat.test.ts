@@ -26,6 +26,15 @@ describe('a call that took the tab down is recognised by its tool, arguments and
         localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:009-z.md → done [gate test-runner]', t: now - 1000 }], beat: now }]));
         expect(toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000)).toBe(1);
     });
+    it('a gate crash recorded in a project that was replaced since is not counted (review of b1674f7)', () => {
+        const now = Date.now();
+        localStorage.setItem('fg_project_epoch', '1');
+        localStorage.setItem('fg_tool_crashes', JSON.stringify([{ calls: [{ name: 'task', label: 'task:009-z.md → done [gate test-runner]', t: now - 1000, ep: 1 }], beat: now }]));
+        expect(toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000)).toBe(1);
+        localStorage.setItem('fg_project_epoch', '2');
+        expect(toolCrashCount('→ done [gate test-runner]', 24 * 3_600_000)).toBe(0);
+        localStorage.removeItem('fg_project_epoch');
+    });
     it('a chain or pipe that runs the scripts of a crashed command is that crash again, a different file state or script set is not', () => {
         const code = 'cd /workspace && node check_chem.mjs && echo "===" && node check_chem2.mjs';
         expect(commandScripts(code)).toEqual(['check_chem.mjs', 'check_chem2.mjs']);

@@ -146,6 +146,14 @@ describe('test-runner gate', () => {
         expect(r.transitioned).toBe(true);
         expect((r.unverified ?? []).join(' ')).toMatch(/8 of 14 test files were not run/);
     });
+    it('a move made without an update_task_status call is marked while its gates run, so a crash in them is reported (reviews of b0c3c0f, b1674f7)', async () => {
+        files['test_m.js'] = 'x';
+        let seen = '';
+        W.executeToolAsync = async () => { seen = sessionStorage.getItem('fg_tools_running') ?? ''; return { stdout: '1 test file(s) passed', stderr: '', exit_code: 0 }; };
+        await W.transitionTask(TASK, 'done');
+        expect(seen).toMatch(/→ done/);
+        expect(sessionStorage.getItem('fg_tools_running')).toBeNull();   // cleared afterwards
+    });
     it('a missing project entry point (test/runner.js) is a failure, not a missing package (review of 0e6582a)', async () => {
         files['test_x.js'] = 'x';
         W.executeToolAsync = async () => ({ stdout: "== test_x.js (exit 1)\nnode: Cannot find module 'test/runner.js'\nFAILED: test_x.js\n", stderr: '', exit_code: 1 });

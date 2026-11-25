@@ -43,7 +43,9 @@ function _tick(): void {
 function _startBeat(): void { if (!_beat) _beat = setInterval(_tick, 500); }
 
 /** `content` is what the check runs: the page with its workspace files inlined and the check's own steps (tabs.ts pageCheckContent). */
+let _checksRunning = 0;   // parallel workers can run page checks at once: the marker stays until the last one ends (review of c639263)
 export function beginPageCheck(path: string, content: string, chatId: string | null): void {
+    _checksRunning++;
     const now = Date.now();
     _cur = { path, hash: hashContent(content), chatId, session: SESSION_ID, version: FG_VERSION, t: now, beat: now,
              stage: 'while the page loaded (its start-up scripts were running)', lines: [], runner: _isRunner() };
@@ -62,6 +64,8 @@ export function notePageCheck({ stage, line }: { stage?: string; line?: string }
 }
 
 export function endPageCheck(): void {
+    if (_checksRunning > 0) _checksRunning--;
+    if (_checksRunning > 0) return;   // another check is still running: its marker is the one a crash has to find
     _cur = null;
     try { sessionStorage.removeItem(RUNNING); } catch {}
 }
@@ -117,7 +121,9 @@ export function describePageCheckCrash(c: PageCheckCrash): string {
 const TOOLS_RUNNING = 'fg_tools_running';
 const TOOL_CRASHES = 'fg_tool_crashes';
 
-export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; scripts?: string[]; }
+export interface ToolCallMark { name: string; label: string; t: number; sig?: string; ws?: number; scripts?: string[]; ep?: number; }
+// The project generation (exec-limits.ts WORKSPACE_EPOCH_KEY), read here without the import: a crash recorded in a project that was replaced since says nothing about the new one (review of b1674f7).
+const _epoch = (): number => { try { return Number(localStorage.getItem('fg_project_epoch')) || 0; } catch { return 0; } };
 export interface ToolCrash { calls: ToolCallMark[]; chatId: string | null; session: string; version: string; beat: number; runner?: boolean; told?: boolean; heapMb?: number; heapLimitMb?: number; }
 
 const _calls = new Map<number, ToolCallMark>();
@@ -140,7 +146,7 @@ function _writeCalls(beat = Date.now()): void {
 /** Mark a tool call as running (until endToolCall with the returned id). `label` says what it runs. */
 export function beginToolCall(name: string, label: string, chatId: string | null, same?: { sig: string; ws: number; scripts?: string[] }): number {
     const id = ++_seq;
-    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 4000)).slice(0, 200), t: Date.now(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts.map(f => redactForLog(String(f))) } : {}) } : {}) });
+    _calls.set(id, { name, label: redactForLog(String(label).slice(0, 4000)).slice(0, 200), t: Date.now(), ep: _epoch(), ...(same ? { sig: same.sig, ws: same.ws, ...(same.scripts?.length ? { scripts: same.scripts.map(f => redactForLog(String(f))) } : {}) } : {}) });
     _callsChat = chatId;
     _callsRunner = _isRunner();
     _writeCalls();
@@ -153,6 +159,8 @@ export function noteToolStage(name: string, stage: string): void {
     for (const c of _calls.values()) if (c.name === name) { c.label = `${c.label.replace(/ \[[^\]]*\]$/, '')} [${stage}]`; changed = true; }
     if (changed) _writeCalls();
 }
+/** Whether a call of this tool is marked as running. */
+export function toolCallRunning(name: string): boolean { for (const c of _calls.values()) if (c.name === name) return true; return false; }
 export function endToolCall(id: number): void { if (_calls.delete(id)) _writeCalls(); }
 
 /** At start-up: the tool calls this tab was running when it died, recorded for the agent (marker cleared); null when none.
@@ -236,7 +244,7 @@ export function commandScripts(code: unknown): string[] {
 /** How many recorded tab crashes were in a tool call whose label contains `part` (e.g. "task:138-x.md → done [gate test-runner]"). */
 export function toolCrashCount(part: string, withinMs = Infinity): number {
     const since = Date.now() - withinMs;
-    try { return (JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[]).filter(c => c.calls?.some(x => String(x.label).includes(part) && (x.t ?? 0) >= since)).length; } catch { return 0; }
+    try { return (JSON.parse(localStorage.getItem(TOOL_CRASHES) || '[]') as ToolCrash[]).filter(c => c.calls?.some(x => String(x.label).includes(part) && (x.t ?? 0) >= since && (x.ep === undefined || x.ep === _epoch()))).length; } catch { return 0; }
 }
 
 export function describeToolCrash(c: ToolCrash): string {
@@ -265,7 +273,7 @@ export function takeCrashNote({ chatId = null as string | null, runner = false }
 
 // A reload, navigation or closed tab is not a crash.
 if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
-    endPageCheck();
+    _checksRunning = 1; endPageCheck();   // the page is going away: whatever is still counted goes with it
     _calls.clear();
     try { sessionStorage.removeItem(TOOLS_RUNNING); } catch {}
 });

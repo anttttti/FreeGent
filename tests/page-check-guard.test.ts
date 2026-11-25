@@ -9,6 +9,12 @@ const W = window as any;
 describe('check_page crash guard', () => {
     beforeEach(() => { window.dispatchEvent(new Event('pagehide')); sessionStorage.clear(); localStorage.clear(); });   // pagehide: a fresh page holds no calls
 
+    it('two overlapping checks: the first to end leaves the second\'s marker (review of c639263)', () => {
+        beginPageCheck('a.html', 'A', 'chat-1'); beginPageCheck('b.html', 'B', 'chat-1');
+        endPageCheck();
+        expect(takePageCheckCrash()).toMatchObject({ path: 'b.html' });   // still marked: a crash now is recorded
+    });
+
     it('a check the tab died in is recorded once, for that content only', () => {
         beginPageCheck('game/index.html', '<p>v1</p>', 'chat-1');
         const c = takePageCheckCrash();

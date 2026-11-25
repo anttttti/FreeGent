@@ -1105,6 +1105,8 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
         }
         useWindow = wantWindow && await ensureCheckWindow(askToOpenWindow);
     } catch (e) { releaseWindow(); throw e; }   // any other way out used to leave every later check for the window waiting for this one
+    // An automatic check (the Done gate) that needs the isolated window and could not open it does not fall back to the app tab: a page that took a check down before could freeze this tab (review of b1674f7).
+    if (wantWindow && !useWindow && !askToOpenWindow) { releaseWindow(); return { error: `check_page: "${path}" took a check down before and needs the separate check window, which could not be opened without asking, so it was not loaded in the app tab. Run check_page on it from the chat to open the window.` }; }
     if (wantWindow && !useWindow) releaseWindow();   // checked in the tab after all: the next check may take its turn
     let cw: CheckWindowSession | null = null;
     let windowDied = false;
@@ -1138,8 +1140,11 @@ async function runPageCheck(path: string, { actions = [] as any[], probes = [] a
     const ready = new Promise<boolean>(r => { readyResolve = r; });
     const onData = (d: any) => {
         if (!d || typeof d !== 'object') return;
-        if (d.type === 'fg-check-log' && (logs.length < 500 || (d.level === 'error' && logs.length < 700))) {   // errors keep a reserve after a noisy start (codex R421)
-             logs.push({ level: d.level, text: d.text, t: d.t }); notePageCheck({ line: `${d.level}: ${d.text}` }); }
+        if (d.type === 'fg-check-log') {
+            // The crash recorder keeps its own last lines whatever the report's cap: a chatty page that crashes late must leave its final error, not its start-up (review of c639263).
+            notePageCheck({ line: `${d.level}: ${d.text}` });
+            if (logs.length < 500 || (d.level === 'error' && logs.length < 700)) logs.push({ level: d.level, text: d.text, t: d.t });   // errors keep a reserve after a noisy start (codex R421)
+        }
         else if (d.type === 'fg-check-alive') alive = true;
         else if (d.type === 'fg-check-ready') readyResolve(true);
         else if (d.type === 'fg-check-reply') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d.result); } }
