@@ -32,6 +32,12 @@ beforeEach(() => {
 afterEach(() => { for (const k of STUBBED) W[k] = saved[k]; localStorage.clear(); });
 
 describe('findProjectTests', () => {
+    it('a Local Folder task names the folder\'s test beside a file of its ## Files, not the workspace\'s (review of 90df709)', async () => {
+        files['src/app.test.js'] = 'workspace test'; files['local/src/app.test.js'] = 'folder test'; files['local/src/app.js'] = '';
+        expect(await findProjectTests(['src/app.js'], 'local/')).toEqual(['local/src/app.test.js']);
+        delete files['local/src/app.test.js'];
+        expect(await findProjectTests(['src/app.js'], 'local/')).toEqual([]);   // the workspace's src/app.test.js is not this task's
+    });
     it('finds tests by the usual conventions, shallow first, and skips dependencies, scratch and the task folders', async () => {
         for (const f of ['test_enemies.mjs', 'src/game.test.js', 'tests/test_cli.py', 'wordcount_test.py', 'lib/x.spec.mjs',
             'node_modules/pkg/test_x.js', 'fg-tasks/test_t.mjs', 'dist/test_d.js', 'src/game.js', 'testdata.json', 'run_tests.mjs'])
@@ -191,11 +197,20 @@ describe('a Local Folder task is checked in its own root', () => {
         expect(runs).toHaveLength(1);
         expect(runs[0]).toContain('cd local && npm test');
     });
-    it('without a package.json runs the folder\'s test files by their local/ path and ignores the workspace\'s', async () => {
+    it('without a package.json runs the folder\'s test files from the folder and ignores the workspace\'s (cd local, review of 90df709)', async () => {
         files['test_ws.mjs'] = 'x'; files['local/test_dir.mjs'] = 'y';
         await W.transitionTask(LT, 'done');
-        expect(runs[0]).toContain("node 'local/test_dir.mjs'");
+        expect(runs[0]).toContain('cd local');
+        expect(runs[0]).toContain("node 'test_dir.mjs'");
         expect(runs[0]).not.toContain('test_ws.mjs');
+    });
+    it('a workspace task does not take the attached folder\'s package.json through the bare-path fallback (review of 90df709)', async () => {
+        const read = W.agentReadFile;
+        W.agentReadFile = async (p) => (p === 'package.json' && 'local/package.json' in files ? files['local/package.json'] : read(p));   // what the bare-path fallback does
+        files[TASK] = task('005'); files['local/package.json'] = JSON.stringify({ scripts: { test: 'node t.js' } }); files['test_ws.mjs'] = 'x';
+        await W.transitionTask(TASK, 'done');
+        expect(runs[0]).not.toContain('npm test');
+        expect(runs[0]).toContain("node 'test_ws.mjs'");
     });
     it('a workspace task still ignores the folder\'s tests', async () => {
         files[TASK] = task('005'); files['test_ws.mjs'] = 'x'; files['local/test_dir.mjs'] = 'y';
@@ -268,6 +283,14 @@ describe('page-check gate', () => {
         errs = [E('Error A'), E('Error B'), E('Error C'), E('Fetch failed https://x.invalid/v2')];   // the fourth error changed, past the three that are shown
         expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);
         expect((await W.transitionTask(t, 'done')).transitioned).toBe(false);
+    });
+    it('a Local Folder task is checked on the folder\'s page, not the workspace\'s (review of 90df709)', async () => {
+        files['index.html'] = '<p>workspace</p>'; files['local/index.html'] = '<p>folder</p>';
+        const T = 'local/fg-tasks/001-x.md'; files[T] = task('001');
+        let checked = '';
+        W.runPageCheck = async (p) => { checked = p; return { path: p, loaded: true, summary: 'ok', errors: [] }; };
+        await W.transitionTask(T, 'done');
+        expect(checked).toBe('local/index.html');
     });
     it('blocks done on a page that crashed the tab and is unchanged (it is refused, not passed), once', async () => {
         files['index.html'] = '<script>for(;;){}</script>';

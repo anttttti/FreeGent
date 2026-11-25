@@ -96,6 +96,13 @@ describe('ledger follows the Tasks tab', () => {
         await W.moveTaskToColumn('fg-tasks/001-first.md', 'todo');
         expect(files['fg-tasks/001-first.md']).toMatch(/^status: open$/m);
     });
+    it('an override of a task that was deleted meanwhile does not make a stub (review of b0c3c0f)', async () => {
+        const { forceTaskStatus } = await import('../qa.ts');
+        delete files['fg-tasks/001-first.md'];
+        W.agentReadFile = async (p) => { if (!(p in files)) throw new Error('File not found: ' + p); return files[p]; };
+        await forceTaskStatus('fg-tasks/001-first.md', 'done', 'because');
+        expect(files['fg-tasks/001-first.md']).toBeUndefined();
+    });
     it('a move the gates refuse is made when the user confirms it, a done task marked unverified, and not when the user declines', async () => {
         W.transitionTask = async () => ({ transitioned: false, reason: '[test-runner] Tests failed: test_a.mjs' });
         W.forceTaskStatus = (await import('../qa.ts')).forceTaskStatus;
@@ -116,6 +123,14 @@ describe('ledger follows the Tasks tab', () => {
         await vi.waitFor(() => expect(files['fg-tasks/001-first.md']).toBeUndefined());
         await vi.waitFor(() => expect(ledgerRows()).toEqual([]));
         expect(files['fg-tasks/ledger.md']).toContain('## Archive\nold stuff');
+    });
+
+    it('a folder task and a workspace task each get their own ledger (review of de28506)', async () => {
+        files['local/fg-tasks/002-folder.md'] = '---\nid: 002\ntitle: Folder task\nstatus: open\n---\n# F\n';
+        files['local/fg-tasks/ledger.md'] = '| ID  | Status       | Priority | Title |\n|-----|--------------|----------|-------|\n';
+        await W.syncLedgerWithTaskFiles();
+        expect(files['fg-tasks/ledger.md']).not.toContain('Folder task');
+        expect(files['local/fg-tasks/ledger.md']).toContain('Folder task');
     });
 
     it('does not create a ledger for a project that has none', async () => {

@@ -41,9 +41,9 @@ function _mdSection(content: string, ...names: string[]): string | null {
 const _tailKeepStatus = (cmd: string, n: number) =>
     `fg_qa_out=$(${cmd} 2>&1); fg_qa_rc=$?; printf '%s\\n' "$fg_qa_out" | tail -n ${n}; exit $fg_qa_rc`;
 
-async function loadWorkflow(): Promise<{ gates: any; config: any; unreadable?: string }> {
+async function loadWorkflow(root: '' | 'local/' = ''): Promise<{ gates: any; config: any; unreadable?: string }> {   // the task's own root: a Local Folder task follows the folder's WORKFLOW.md (review of 90df709)
     try {
-        return parseWorkflowMd(await agentReadFile('WORKFLOW.md'));
+        return parseWorkflowMd(await agentReadFile(`${root}WORKFLOW.md`));
     } catch (e) {
         // No WORKFLOW.md is the defaults; a file that is there and could not be read is not (codex R374): the caller must not decide on the defaults then.
         if (_isMissingFile(e)) return { gates: QA_DEFAULT_GATES, config: {} };
@@ -153,7 +153,7 @@ async function _updateLedgerRow(taskPath, newStatus) {
     // board's add-task path, or a ledger that predates it). The task file already holds the new
     // status, so rebuilding the ledger from the files gives the row, and every other row, correctly.
     if (typeof rebuildLedger === 'function') {
-        try { await rebuildLedger(); } catch (e) { console.warn('[QA] ledger rebuild failed:', e); }
+        try { await rebuildLedger(taskRootOf(taskPath)); } catch (e) { console.warn('[QA] ledger rebuild failed:', e); }
     }
 }
 
@@ -200,7 +200,7 @@ async function gate_dependency_check(taskPath, content) {
 
     // A listing that dropped an unreadable file would let its task count as missing or done: refuse instead of guessing (day exploration D015).
     let allTasks: any[];
-    try { allTasks = await loadTaskFiles({ strict: true }); }
+    try { allTasks = await loadTaskFiles({ strict: true, all: true }); }
     catch (e: any) { return { blocks: true, reason: `Cannot check the dependencies (${depends.map(d => '#' + d).join(', ')}): ${e?.message ?? e}. Try the status change again.` }; }
     // Two files can share an id (imported or agent-written): the dependency is met only when every one of them is done, whatever order they load in (codex R373).
     // `depends: 5` names the task `id: 005`: numeric ids compare as numbers, as the runner's selector does (review of 0e6582a).
@@ -534,7 +534,8 @@ export async function findProjectTests(named: string[] = [], root: '' | 'local/'
         const base = fp.replace(/\.[^.]+$/, '');
         const name = fp.split('/').pop()!.replace(/\.[^.]+$/, '');
         for (const c of [`${base}.test.js`, `${base}.spec.js`, `tests/${name}.test.js`, `__tests__/${name}.js`]) {
-            try { await agentReadFile(c); found.add(c); break; } catch {}
+            const at = root && !c.startsWith(root) ? root + c : c;   // the task's own root: `src/app.js` of a folder task names the folder's tests (review of 90df709)
+            try { await agentReadFile(at); found.add(at); break; } catch {}
         }
     }
     let all: Array<{ name: string }> = [];
@@ -549,8 +550,10 @@ export async function findProjectTests(named: string[] = [], root: '' | 'local/'
 
 // One command that runs every file on its own, so the result names the files that failed. The shape is the one
 // _tailKeepStatus already relies on ($(…), $?, printf), which the in-browser shell runs too.
-export function _testCommand(files: string[]): string {
-    const lines = ['fg_qa_failed=""'];
+export function _testCommand(files: string[], root: '' | 'local/' = ''): string {
+    // A Local Folder task runs its tests from the folder, so a test that opens `fixtures/input.json` reads the folder's (review of 90df709).
+    if (root) files = files.map(f => f.startsWith(root) ? f.slice(root.length) : f);
+    const lines = [...(root ? ['cd local || exit 1'] : []), 'fg_qa_failed=""'];
     for (const f of files) {
         const run = f.endsWith('.py') ? `timeout ${_QA_FILE_TIMEOUT_S} python3 -c ${_shq(_QA_PY_RUNNER)} ${_shq(f)}` : `timeout ${_QA_FILE_TIMEOUT_S} node ${_shq(f)}`;
         // The path reaches the shell only as a single-quoted value: in the double-quoted report it was text a `$(…)` or a backtick in a file name could run (codex R387).
@@ -596,6 +599,8 @@ async function gate_test_runner(taskPath, content) {
     const root = taskRootOf(taskPath);
     let cmd: string | null = null;
     try {
+        // A workspace task reads the workspace's manifest only: the bare-path read falls back to the attached folder's file when the workspace has none (review of 90df709).
+        if (!root && !((await agentListFiles()) || []).some((f: any) => f?.name === 'package.json')) throw new Error('no workspace package.json');
         const pkg = JSON.parse(await agentReadFile(`${root}package.json`));
         // `npm init` writes a test script that always fails ("Error: no test specified").
         if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) cmd = _tailKeepStatus(root ? 'cd local && npm test' : 'npm test', 40);
@@ -627,7 +632,7 @@ async function gate_test_runner(taskPath, content) {
             const parts: any[] = [], t0 = Date.now();
             for (let i = 0; i < testFiles.length; i += _QA_TEST_CHUNK) {
                 if (parts.length && Date.now() - t0 > _QA_TEST_BUDGET_MS) { notRun += testFiles.length - i; break; }
-                parts.push(await one(_testCommand(testFiles.slice(i, i + _QA_TEST_CHUNK))));
+                parts.push(await one(_testCommand(testFiles.slice(i, i + _QA_TEST_CHUNK), root)));
             }
             const bad = parts.find(r => typeof r.exit_code === 'number' && r.exit_code !== 0) ?? parts.find(r => r.exit_code !== 0);   // a failing test outranks a sandbox error in another batch (review of b0c3c0f)
             res = { stdout: parts.map(r => r.stdout || '').join(''), stderr: parts.map(r => r.stderr || '').join(''), error: parts.map(r => r.error).filter(Boolean).join('\n') || undefined,
@@ -671,12 +676,18 @@ async function gate_test_runner(taskPath, content) {
 // Autopilot exploration of 2026-10-27 three of ten projects ended with a page that drew nothing (a module that lost its exports,
 // a call to a function main.js no longer imported, a TypeError at start-up) while every task was done. Browser only; the page
 // is the root index.html (else the only .html file at the root). Errors already bounced once for this task are accepted.
+// The root page of the task's own root: a Local Folder task's page is local/index.html, not the workspace's (review of 90df709).
+function _rootPageIn(names: string[], root: '' | 'local/'): string | null {
+    if (!root) return rootPageOf(names);
+    const p = rootPageOf(names.filter(n => n.startsWith(root)).map(n => n.slice(root.length)));
+    return p ? root + p : null;
+}
 async function gate_page_check(taskPath) {
     if (!getQaTestRunner()) return { blocks: false, outcome: 'skipped', detail: 'Test runner is turned off' };
     if (typeof runPageCheck !== 'function' || runtime.hasNativeExec) return { blocks: false, outcome: 'skipped', detail: 'No browser page check here' };
     let names: string[] = [];
     try { names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean); } catch {}
-    const page = rootPageOf(names);
+    const page = _rootPageIn(names, taskRootOf(taskPath));
     if (!page) return { blocks: false, outcome: 'skipped', detail: 'No page at the project root' };
     let r: any;
     try { r = await runPageCheck(page, { waitMs: 1500, askToOpenWindow: false }); }
@@ -783,7 +794,7 @@ async function noteTaskStart(taskPath: string): Promise<void> {
     try { _taskStartData.set(taskPath, await _projectData()); _taskStartDataEpoch.set(taskPath, workspaceEpoch()); } catch {}
     try { _taskStartIds.set(taskPath, await _projectIdentifiers()); } catch {}
     try { _taskStartFiles.set(taskPath, await _projectStamps()); } catch {}
-    try { const e = await _rootPageErrors(); if (e) _taskStartPageErrors.set(taskPath, e.errors); } catch {}
+    try { const e = await _rootPageErrors(taskRootOf(taskPath)); if (e) _taskStartPageErrors.set(taskPath, e.errors); } catch {}
 }
 // The errors the root page reports when a task starts. A task that fails leaves its code behind (a fetch to a dead URL), so every later task would meet that
 // error at its own `done` and, having edited the page, own it: kanbanflow set 2, failchain: the independent footer task ended failed or blocked
@@ -791,10 +802,10 @@ async function noteTaskStart(taskPath: string): Promise<void> {
 const _taskStartPageErrors = new Map<string, string[]>();
 // Only the volatile parts are blanked (line and column, long numbers such as timestamps and ports): a `/v1` that became `/v2` is a different error (review of 0e6582a).
 const _errKey = (e: string) => e.replace(/\(line \d+:\d+[^)]*\)/g, '').replace(/:\d+(?::\d+)?\b/g, ':#').replace(/\bline \d+/gi, 'line #').replace(/\d{5,}/g, '#').trim();
-async function _rootPageErrors(): Promise<{ page: string; errors: string[] } | null> {
+async function _rootPageErrors(root: '' | 'local/' = ''): Promise<{ page: string; errors: string[] } | null> {
     if (!getQaTestRunner() || typeof runPageCheck !== 'function' || runtime.hasNativeExec) return null;
     const names = ((await agentListFiles()) || []).map((f: any) => f?.name).filter(Boolean) as string[];
-    const page = rootPageOf(names);
+    const page = _rootPageIn(names, root);
     if (!page) return null;
     const r: any = await runPageCheck(page, { waitMs: 1500, askToOpenWindow: false });
     if (r?.crashed || r?.error) return null;
@@ -864,8 +875,8 @@ async function gate_regression_guard(taskPath) {
     if (!getQaRegressionGuard()) return { blocks: false, outcome: 'skipped', detail: 'Regression guard is turned off' };
     if (!_hasBashOrCode())       return { blocks: false, outcome: 'skipped', detail: 'No sandbox — skipping regression guard' };
 
-    const { config }: { config: any } = await loadWorkflow();
-    let cmd: string | null = config?.regression_guard_command || null;
+    const { config }: { config: any } = await loadWorkflow(taskRootOf(taskPath));
+    let cmd: string | null = config?.regression_guard_command ? `${taskRootOf(taskPath) ? 'cd local && ' : ''}${config.regression_guard_command}` : null;
     if (!cmd) {
         try {
             const root = taskRootOf(taskPath), cd = root ? 'cd local && ' : '';
@@ -942,9 +953,14 @@ const _SOFT_GATES = new Set(['test-runner', 'page-check', 'acceptance-review', '
 // The user moves a card over the gates that refused it (the board asks first): the status is written, a `done` is marked unverified, and the file says who did it.
 export async function forceTaskStatus(taskPath: string, toStatus: string, because: string): Promise<void> {
     const to = canonTaskStatus(toStatus);
+    // A task deleted while the review was pending is not made again as a stub by an override (review of b0c3c0f).
+    try { await agentReadFile(taskPath); } catch (e) { if (_isMissingFile(e)) return; }
     await appendGateNote(taskPath, `## Moved by the user over the gates (${new Date().toISOString().slice(0, 16)}Z)\n${because.slice(0, 500)}`);
     await setTaskStatus(taskPath, to);   // first: a numbered task file without front matter gets its front matter here, and `qa` can then be written into it (review of b0c3c0f)
-    if (to === 'done') { try { await agentWriteFile(taskPath, _setFrontmatterField(await agentReadFile(taskPath), 'qa', 'unverified')); } catch {} }
+    if (to === 'done') {
+        try { await agentWriteFile(taskPath, _setFrontmatterField(await agentReadFile(taskPath), 'qa', 'unverified')); } catch {}
+        _gatesPassedDone.add(taskPath);   // the user's override is a completion the runner recognises: it must not move the card back out of Done and run the refused gate again (review of b0c3c0f)
+    }
     try { await refreshTasks(); } catch {}
 }
 
@@ -977,7 +993,7 @@ async function _transitionTask(taskPath, toStatus) {
         return { transitioned: false, reason };
     }
 
-    const { gates: workflowGates, unreadable: workflowUnreadable } = await loadWorkflow();
+    const { gates: workflowGates, unreadable: workflowUnreadable } = await loadWorkflow(taskRootOf(taskPath));
     if (workflowUnreadable) return { transitioned: false, reason: `WORKFLOW.md could not be read (${workflowUnreadable}), so the project's gates were not checked. Nothing was changed; try again.` };
     // If the model jumped straight from in-progress to done (skipping in-review),
     // in-progress->done is in QA_DEFAULT_GATES with the full review suite.

@@ -2,7 +2,7 @@
 // Depends on: config.js, workers.js, state.js (aiBusy, setAiJob, activeChatId).
 import { activeChatId, aiBusy, setAiJob } from './state.js';
 import { redactSecrets, storedSecretValues } from './convo-log.js';
-import { isTaskPath, dedupeTasksByTitle } from './task-status.js';
+import { isTaskPath, dedupeTasksByTitle, taskRootOf } from './task-status.js';
 
 export async function runPostTurnAgents(): Promise<void> {
     if (getAgentReviewLogs()) {
@@ -136,8 +136,9 @@ async function _saveLogAndCreateReviewTask() {
 }
 
 
-export async function rebuildLedger(): Promise<void> {
-    const LEDGER = 'fg-tasks/ledger.md';
+// `root`: the ledger of one root, from that root's task files only (`local/` for an attached Local Folder): a workspace ledger with the folder's tasks in it, and a stale folder ledger, was the result of one table for both (review of de28506).
+export async function rebuildLedger(root: '' | 'local/' = ''): Promise<void> {
+    const LEDGER = `${root}fg-tasks/ledger.md`;
     const isMissing = (e: any) => /not found|ENOENT|no such file|does not exist/i.test(String(e?.message ?? e));
     let files: Array<{ name: string; size?: number; lastModified?: number; isLocal?: boolean }>;
     try { files = await agentListFiles(); } catch { return; }
@@ -146,7 +147,7 @@ export async function rebuildLedger(): Promise<void> {
     // as the board does (codex R117). The older numbered-file regex left out local/fg-tasks/ and unnumbered tasks and included the retired tasks/ folders.
     const taskPaths = (files || [])
         .map(f => (typeof f === 'string' ? f : f.name) || '')
-        .filter(n => isTaskPath(n) && /\.md$/i.test(n) && !n.endsWith('/ledger.md'))
+        .filter(n => isTaskPath(n) && /\.md$/i.test(n) && !n.endsWith('/ledger.md') && taskRootOf(n) === root)
         .sort();
 
     if (!taskPaths.length) {
@@ -199,6 +200,7 @@ export async function rebuildLedger(): Promise<void> {
 export async function repairLedgerIfBroken(): Promise<void> {
     if (!getAgentLedger?.()) return;
     await rebuildLedger().catch(() => {});
+    await rebuildLedger('local/').catch(() => {});
 }
 
 // ── Auto-init: write AGENTS.md when a local folder is opened with no project context ──

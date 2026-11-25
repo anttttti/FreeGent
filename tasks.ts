@@ -17,7 +17,7 @@ function parseLastLogEntry(content) {
 // strict: a listing or read that fails (IndexedDB erroring on a low-memory device) throws instead of leaving tasks out. The lenient
 // default suits callers that only look; Autopilot read the short list as "no tasks left" and ended the run with "All tasks complete"
 // while tasks were still open (live logs 2026-10-26), and the board drew every column empty.
-async function loadTaskFiles({ strict = false }: { strict?: boolean } = {}) {
+async function loadTaskFiles({ strict = false, all = false }: { strict?: boolean; all?: boolean } = {}) {   // all: every task file, copies included (the dependency check must see an unfinished copy; review of de28506)
     const tasks: any[] = [];
     try {
         const files = await agentListFiles();
@@ -48,7 +48,7 @@ async function loadTaskFiles({ strict = false }: { strict?: boolean } = {}) {
     }
     tasks.sort((a, b) => (Number(a.fm.id) || 0) - (Number(b.fm.id) || 0));
     // A copy of a task (same title) is not a second task: Autopilot once wrote one while working.
-    return dedupeTasksByTitle(tasks);
+    return all ? tasks : dedupeTasksByTitle(tasks);
 }
 
 let taskPreviewEditor: any = null;
@@ -486,7 +486,7 @@ function openTaskDialog(opts: { status?: string; path?: string; content?: string
             const today = new Date().toISOString().slice(0, 10);
             const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'task';
             await withTaskCreateLock(async () => {
-                const existing = await loadTaskFiles();
+                const existing = await loadTaskFiles({ strict: true });   // a task that could not be read must not read as "no tasks": the new one would go to the wrong root (review of 90df709)
                 if (workspaceEpoch() !== epoch) throw new Error('The project was cleared or replaced while this form was open, so nothing was saved.');
                 let nextId = Math.max(0, ...existing.map(t => Number(t.fm.id) || 0),
                     ...existing.map(t => Number((t.path.match(/\/(\d+)-/) || [])[1]) || 0)) + 1;
@@ -599,7 +599,7 @@ async function _doRefreshTasks() {
 }
 async function syncLedgerWithTaskFiles() {
     // A ledger failure (e.g. a write error on a low-memory device) must not stop the board refresh.
-    try { await rebuildLedger(); } catch (e) { console.warn('[ledger] rebuild failed:', e); }
+    try { await rebuildLedger(); await rebuildLedger('local/'); } catch (e) { console.warn('[ledger] rebuild failed:', e); }   // each root's ledger from its own tasks
     // Always refresh the board — rebuildLedger() returns early when there are no task
     // files and won't trigger refreshTasks() via agentWriteFile. The in-flight guard in
     // refreshTasks() collapses this into one render when agentWriteFile already fired one.

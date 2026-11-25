@@ -162,6 +162,21 @@ describe('lifecycle gates', () => {
         expect(r.reason).toMatch(/waiting on #005 \(in-progress\)/);
     });
 
+    it('an unfinished copy with the same id and title still holds back its dependents (review of de28506)', async () => {
+        files['fg-tasks/005-a.md'] = '---\nid: 005\ntitle: Same\nstatus: done\n---\n# T\n';
+        files['fg-tasks/005-b.md'] = '---\nid: 005\ntitle: Same\nstatus: in-progress\n---\n# T\n';
+        files['fg-tasks/009-dep.md'] = '---\nid: 009\ntitle: Dependent\nstatus: todo\ndepends: 005\n---\n# T\n';
+        const r = await W.transitionTask('fg-tasks/009-dep.md', 'in-progress');
+        expect(r.transitioned).toBe(false);
+    });
+
+    it('a Local Folder task follows the folder\'s WORKFLOW.md, not the workspace\'s (review of 90df709)', async () => {
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- no-such-gate\n';   // would refuse any workspace task
+        files['local/fg-tasks/001-t.md'] = task('- [x] done\n').replace('id: 001', 'id: 001');
+        const r = await W.transitionTask('local/fg-tasks/001-t.md', 'in-review');
+        expect(r.reason ?? '').not.toMatch(/no-such-gate/);
+    });
+
     it('depends: 5 names the task with id 005, as the runner reads it (review of 0e6582a)', async () => {
         files['fg-tasks/005-a.md'] = '---\nid: 005\ntitle: A\nstatus: done\n---\n# T\n';
         files['fg-tasks/009-dep.md'] = '---\nid: 009\ntitle: Dependent\nstatus: todo\ndepends: 5\n---\n# T\n';
