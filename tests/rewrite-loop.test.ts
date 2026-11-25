@@ -37,6 +37,12 @@ describe('noteRewrites', () => {
         for (let i = 0; i < 3; i++) expect(noteRewrites(st, [w('src/broken.ts')])).toBeNull();
         expect(noteRewrites(st, [w('src/broken.ts')])).toMatch(/src\/broken\.ts in full 4 times/);
     });
+    it('a check of scripts/index.js does not clear src/index.js (review of 7116993)', () => {
+        const st = newRewriteState();
+        for (let i = 0; i < 3; i++) noteRewrites(st, [w('src/index.js')]);
+        noteRewrites(st, [{ name: 'execute_code', args: { language: 'bash', code: 'node --check scripts/index.js' }, result: { exit_code: 0 } }]);
+        expect(noteRewrites(st, [w('src/index.js')])).toMatch(/src\/index\.js in full 4 times/);
+    });
     it('a check naming data.ts does not clear a.ts (review 2026-11-16 CR-02)', () => {
         const ok = (code: string) => ({ name: 'execute_code', args: { language: 'bash', code }, result: { exit_code: 0 } });
         const st = newRewriteState();

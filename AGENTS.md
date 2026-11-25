@@ -201,7 +201,7 @@ Role injection (`workers.js` → `_roleSkillBodies(roleName)`): skills with a ma
 2. Add `name` to `Skills` tab in the UI to make it toggleable (it auto-appears via `loadSkills()`)
 3. If the skill needs a tool that doesn't exist yet: follow **Add a tool** first
 4. If activation should require a setting flag: add a `requires: fg_<key>` line and ensure the key is set in `settings-ui.js`
-5. Test: send a message containing one of the trigger terms and confirm `currentTurnSkills` includes the name (check the system prompt via browser devtools)
+5. Test: send a message containing one of the trigger terms and confirm `currentTurnSkills` includes the name (a triggered skill's body is in the user message's `~~~guidance` block, not the system prompt: check the request in browser devtools)
 
 ## Key files
 

@@ -669,7 +669,8 @@ export function noteRewrites(st: RewriteState, results: Array<{ name: string; ar
             const code = String(r.args?.code ?? '');
             // Whole words of the command, never a substring (`a.ts` is not in `data.ts`) (review 2026-11-16 CR-02).
             const words = code.split(/[\s'"`;&|()<>=]+/).map(w => w.replace(/^(?:\.\/)+/, '').replace(/^\/?workspace\//, ''));
-            const named = [...st.keys()].filter(p => words.some(w => w === p || w.split('/').pop() === p.split('/').pop()));
+            // A checked path in another folder is another file (`scripts/index.js` is not `src/index.js`); a bare name (`index.js`) may stand for the tracked one (review of 7116993).
+            const named = [...st.keys()].filter(p => words.some(w => w === p || (w.includes('/') ? p.endsWith('/' + w) : w === p.split('/').pop())));
             if (named.length) for (const p of named) st.delete(p);
             else if (!/[\w./-]+\.[A-Za-z]{1,5}\b/.test(words.filter(w => !TEST_PATH_RE.test(w)).join(' ').replace(/\b(?:node|tsc|npm|npx)\b/g, ''))) st.clear();
         }

@@ -29,6 +29,20 @@ describe('dev-log', () => {
         expect(body.entries.map((e: any) => [e.level, e.text, e.count])).toEqual([['warn', 'same', 2], ['error', 'other', undefined]]);
     });
 
+    it('after a failed send the queued entries get a delayed retry, a bounded number of times (review of 71928f3)', async () => {
+        vi.useFakeTimers();
+        try {
+            localStorage.setItem('fg_dev_key', 'k1');
+            f.mockRejectedValue(new Error('down'));
+            devLogEntry('error', 'console', 'boom'); await flushDevLog();
+            expect(f).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(61_000);
+            expect(f).toHaveBeenCalledTimes(2);                  // retried once later, without any new entry
+            for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(61_000);
+            expect(f.mock.calls.length).toBeLessThanOrEqual(5);  // and then it stops
+        } finally { vi.useRealTimers(); }
+    });
+
     it('sends the device with each batch and task log', async () => {
         localStorage.setItem('fg_dev_key', 'k1');
         devLogEntry('error', 'console', 'x'); await flushDevLog();

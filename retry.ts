@@ -93,7 +93,8 @@ export const FINISH_ERROR     = new Set(['error', 'abort']);
 // (streamed vLLM reports finish_reason "tool_calls" then, so only the token count shows it): its calls must not run.
 export function responseCutOff(msg: any): string | null {
     const fr = msg?.finish_reason as string | null | undefined;
-    if (fr != null && (FINISH_TOKEN_CAP.has(fr) || FINISH_FILTERED.has(fr) || FINISH_ERROR.has(fr))) return `finish_reason:${fr}`;
+    // `idle_timeout`: the stream stalled and the decoder gave up on it. What arrived is a fragment, not an answer: a worker that had used tools returned it as its final report (review of 6ecd069).
+    if (fr != null && (FINISH_TOKEN_CAP.has(fr) || FINISH_FILTERED.has(fr) || FINISH_ERROR.has(fr) || fr === 'idle_timeout')) return `finish_reason:${fr}`;
     if (msg?.tool_calls?.length && msg._maxTokens > 0 && (msg.usage?.completion_tokens ?? 0) >= msg._maxTokens * 0.98) return `tool_call_cut_off:${msg.usage?.completion_tokens}`;
     return null;
 }

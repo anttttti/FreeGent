@@ -84,3 +84,12 @@ describe('empty-reply retry burst', () => {
         expect(s).toContain('_cutOffStreak = 0; _emptyStreak = 0;');
     });
 });
+
+describe('responseCutOff (review of 6ecd069)', () => {
+    it('a stalled stream is a cut-off response, like a token cap', async () => {
+        const { responseCutOff } = await import('../retry.ts');
+        expect(responseCutOff({ finish_reason: 'idle_timeout' })).toBe('finish_reason:idle_timeout');
+        expect(responseCutOff({ finish_reason: 'length' })).toBe('finish_reason:length');
+        expect(responseCutOff({ finish_reason: 'stop' })).toBeNull();
+    });
+});

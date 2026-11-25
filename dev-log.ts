@@ -83,6 +83,7 @@ export function devLogEntry(level: 'error' | 'warn', source: string, text: strin
     if (!_timer) _timer = setTimeout(() => { void flushDevLog(); }, FLUSH_MS);
 }
 
+let _failedSends = 0;
 /** Send what is queued. A failed send puts the entries back (bounded) and never logs through console. */
 export async function flushDevLog(): Promise<void> {
     if (_timer) { clearTimeout(_timer); _timer = null; }
@@ -101,7 +102,11 @@ export async function flushDevLog(): Promise<void> {
     } finally {
         _sending = false;
         // Entries queued during a send whose timer fired meanwhile (flush returned early) still need a timer (explorations N015); not after a failure, so a down server is not retried in a loop.
+        if (ok) _failedSends = 0;
         if (ok && _queue.length && !_timer) _timer = setTimeout(() => { void flushDevLog(); }, FLUSH_MS);
+        // After a failure the entries wait for the next entry's timer; with none coming (the same warning repeated is counted, not queued) they stayed for good. A few spaced retries, then
+        // it waits again, so a server that is down is not hit in a loop (review of 71928f3).
+        else if (!ok && _queue.length && !_timer && _failedSends++ < 3) _timer = setTimeout(() => { void flushDevLog(); }, 60_000);
     }
 }
 
@@ -126,7 +131,7 @@ export function installDevLog(): void {
 }
 
 /** Test seam. */
-export function _resetDevLogForTest(): void { _secretsAt = 0; _queue = []; _sending = false; if (_timer) { clearTimeout(_timer); _timer = null; } }
+export function _resetDevLogForTest(): void { _failedSends = 0; _secretsAt = 0; _queue = []; _sending = false; if (_timer) { clearTimeout(_timer); _timer = null; } }
 export function _devLogQueueForTest(): DevLogEntry[] { return _queue; }
 
 /** Send a Task's chat log (done / failed / blocked / stopped). Needs a Developer key; never throws.

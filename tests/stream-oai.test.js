@@ -218,6 +218,11 @@ describe('parallel tool calls that share an index (review 2026-11-11 F03)', () =
         expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }], ['call_b', 'read_file', { path: 'b.txt' }]]);
     });
 
+    it('a fragment that repeats the first call\'s id after a second call started goes to the first call (review of 1ce6f86)', async () => {
+        const { msg } = await run([call('call_a', 'read_file', '{"path":', { index: 0 }), call('call_b', 'read_file', '{"path":"b.txt"}', { index: 0 }), call('call_a', '', '"a.txt"}', { index: 0 })]);
+        expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }], ['call_b', 'read_file', { path: 'b.txt' }]]);
+    });
+
     it('one call whose id is repeated on every fragment is still one call', async () => {
         const { msg } = await run([call('call_a', 'read_file', '{"path":', { index: 0 }), call('call_a', '', '"a.txt"}', { index: 0 })]);
         expect(calls(msg)).toEqual([['call_a', 'read_file', { path: 'a.txt' }]]);
