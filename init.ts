@@ -210,7 +210,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Seed director role before restoring chat-specific overrides.
     // clearMainAgentRole() sets the director object; restoreRoleForChat() then switches
     // to a non-director role only when one was explicitly saved for this chat.
-    if (typeof clearMainAgentRole === 'function') clearMainAgentRole();
+    if (typeof clearMainAgentRole === 'function') clearMainAgentRole(false);
     // The custom roles first: a chat whose saved role lives in roles/*.md found only the built-ins here and fell back to the Director (codex R791).
     await loadRoles();
     if (activeChatId) {

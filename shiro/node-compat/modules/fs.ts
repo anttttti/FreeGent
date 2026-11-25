@@ -485,6 +485,8 @@ export function createFsModule(deps: FsDeps): any {
     appendFileSync: (p: string, data: string | Uint8Array) => {
       const resolved = ctx.fs.resolvePath(p, ctx.cwd);
       requireParent(resolved, p);
+      // A file the preload left unread (binary, past its budget) has no content here: appending to '' would overwrite it with only the new data (review of 20eec12).
+      if (skippedSize(resolved) !== undefined) throw fsError('EIO', `EIO: i/o error, '${p}' was not read into this run (binary or past the preload budget); appendFileSync cannot extend it. Use bash (cat >> or tee -a) for this file.`, 'appendfile', p);
       const existing = fileCache.get(resolved) || '';
       const str = typeof data === 'string' ? data : bytesToText(data);
       fileCache.set(resolved, existing + str);

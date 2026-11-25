@@ -462,10 +462,10 @@ export function setMainAgentRole(name: string): boolean {
     _saveRoleForChat(_name);
     return true;
 }
-function clearMainAgentRole(): void {
-    // Director is always the default; this restores it after a custom role is done.
+function clearMainAgentRole(persist = true): void {
+    // Director is always the default; this restores it after a custom role is done. Startup passes false: the chat's saved role is read next (restoreRoleForChat) and must still be there.
     setMainAgentRoleObject(rolesRegistry.get('director') || null);
-    _saveRoleForChat('director');
+    if (persist) _saveRoleForChat('director');
 }
 function restoreRoleForChat(id: string): void {
     try {

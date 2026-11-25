@@ -23,3 +23,15 @@ describe('_repairXmlPseudoCalls', () => {
         expect(_repairXmlPseudoCalls('<read_file>{\n    "path": "a.js"\n}</read_file>', names)).toHaveLength(1);
     });
 });
+
+describe('arguments are read from the text as written (review of 7bd4d5d)', () => {
+    it('inline code and a fenced block inside a call\'s JSON content are kept', () => {
+        const content = 'Use `npm test`.\n```js\nlet a = 1;\n```\n';
+        const r = _repairXmlPseudoCalls(`<write_file>${JSON.stringify({ path: 'README.md', content })}</write_file>`, ['write_file']);
+        expect(r?.[0].args.content).toBe(content);
+    });
+    it('the same for a Longcat call value', () => {
+        const r = _repairLongcatPseudoCalls('<longcat_tool_call>write_file\n<longcat_arg_key>content</longcat_arg_key>\n<longcat_arg_value>run `ls` now</longcat_arg_value>\n</longcat_tool_call>', ['write_file']);
+        expect(r?.[0].args.content).toBe('run `ls` now');
+    });
+});

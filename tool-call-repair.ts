@@ -276,6 +276,7 @@ export function maskQuotedCode(text: string): string {
 // Returns array of {name, args} for direct execution, or null if none found.
 export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
     if (!toolNames?.length) return null;
+    const original = text;   // the mask only decides where a call is: its arguments are read from the text as written (a file's content may hold backticks or a fenced block)
     text = maskQuotedCode(text);
     const nameRe = toolNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const openRe = new RegExp(`<(${nameRe})>`, 'gi');
@@ -296,7 +297,7 @@ export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null):
             else if (c === '}' && --depth === 0) break;
         }
         if (depth !== 0) continue;
-        try { results.push({ name: m[1].toLowerCase(), args: JSON.parse(text.slice(braceStart, i + 1)) }); } catch {}
+        try { results.push({ name: m[1].toLowerCase(), args: JSON.parse(original.slice(braceStart, i + 1)) }); } catch {}
     }
     // Pass 2: attr-style format — <toolname attr="val" ...> (no JSON body on same tag).
     // Requires at least one space after the tool name (distinguishes from JSON-body format).
@@ -327,6 +328,7 @@ export function _repairXmlPseudoCalls(text: string, toolNames: string[] | null):
 // Unknown tool names are skipped. Returns [{name, args}] or null.
 export function _repairLongcatPseudoCalls(text: string, toolNames: string[] | null): Array<{name: string; args: any}> | null {
     if (!toolNames?.length || !text.includes('<longcat_tool_call>')) return null;
+    const original = text;
     text = maskQuotedCode(text);
     const results: Array<{name: string; args: any}> = [];
     const callRe = /<longcat_tool_call>\s*([\w.-]+)([\s\S]*?)(?:<\/longcat_tool_call>|$)/g;
@@ -336,7 +338,8 @@ export function _repairLongcatPseudoCalls(text: string, toolNames: string[] | nu
         const args: Record<string, any> = {};
         const pairRe = /<longcat_arg_key>([\s\S]*?)<\/longcat_arg_key>\s*<longcat_arg_value>([\s\S]*?)<\/longcat_arg_value>/g;
         let a: RegExpExecArray | null;
-        while ((a = pairRe.exec(m[2])) !== null) {
+        const body = original.slice(m.index + m[0].length - m[2].length - (m[0].endsWith('</longcat_tool_call>') ? '</longcat_tool_call>'.length : 0), m.index + m[0].length);   // the same span, unmasked
+        while ((a = pairRe.exec(body)) !== null) {
             const raw = a[2];
             let v: any = raw;
             if (/^\s*(-?\d+(\.\d+)?|true|false|null|[\[{][\s\S]*[\]}])\s*$/.test(raw)) { try { v = JSON.parse(raw); } catch {} }

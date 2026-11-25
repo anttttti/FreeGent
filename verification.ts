@@ -42,7 +42,7 @@ const _kinds = (call: any): string[] => call?.name === 'check_page' ? ['page'] :
 function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
     const none = { changed: false, files: [] as string[] };
     const r = call?.result;
-    if (!call || !r || typeof r !== 'object' || r.error) return none;
+    if (!call || !r || typeof r !== 'object' || (r.error && !(call.name === 'execute_code' && Array.isArray(r.files_written) && r.files_written.length))) return none;   // a command that timed out after writing still wrote (review of 7bd4d5d)
     if (WRITE_TOOLS.has(call.name)) {
         const path = String(call.args?.path ?? call.result?.path ?? '');
         const deleted = call.name === 'delete_file' || (call.name === 'undo_write' && /\bdeleted\b/i.test(String(r.note ?? '')));

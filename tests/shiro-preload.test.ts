@@ -61,4 +61,21 @@ describe('files listed without being read', () => {
         fsm.writeFileSync('/w/icon.png', 'abc');
         expect(fsm.statSync('/w/icon.png').size).toBe(3);
     });
+
+    it('appendFileSync to one fails instead of overwriting it with only the appended data (review of 20eec12)', async () => {
+        const { createFileCache } = await import('../shiro/node-compat/file-cache');
+        const { createFsModule } = await import('../shiro/node-compat/modules/fs');
+        const { createFakeBuffer } = await import('../shiro/node-compat/buffer');
+        const written: string[] = [];
+        const ctx = fakeCtx({ '/w/a.txt': 'hello', '/w/icon.png': 'x'.repeat(40) }, []);
+        Object.assign(ctx.fs, { resolvePath: (p: string) => p, readCached: () => undefined, readdirCached: () => undefined, mkdir: async () => {}, writeFile: async (p: string) => { written.push(p); } });
+        ctx.cwd = '/w';
+        const { fileCache, fileMtimes } = createFileCache();
+        await preloadDir(ctx as any, fileCache, fileMtimes, '/w', 0, 3);
+        const fsm: any = createFsModule({ ctx, fileCache, fileMtimes, pendingPromises: [], tickSyncOps() {}, FakeBuffer: createFakeBuffer(), getBuiltinModule: () => ({}), homeDir: '/home' } as any);
+        expect(() => fsm.appendFileSync('/w/icon.png', 'more')).toThrow(/not read into this run/);
+        expect(written).toEqual([]);
+        fsm.appendFileSync('/w/a.txt', ' world');
+        expect(fileCache.get('/w/a.txt')).toBe('hello world');
+    });
 });

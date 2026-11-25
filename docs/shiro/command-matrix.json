@@ -10246,7 +10246,7 @@
     "shiro/node-compat/modules/crypto.ts": "8ff5fe99d9598d27e37729b6d923f49ff58ff251b05c00ae7c2fe8bf12e21147",
     "shiro/node-compat/modules/deep-equal.ts": "5fcf9d4ae95422435514888589c73ba2990ddbc73b7f6d559d344351758816d5",
     "shiro/node-compat/modules/events.ts": "d385d7f8bc57ad210e4fe4608de387f3a20e40d4df256bbeeafa9185ddb34ab9",
-    "shiro/node-compat/modules/fs.ts": "e2c52f82b19bdd0307b216c53e37c6b19e655f771243ac9f95d65ee8fe3c6631",
+    "shiro/node-compat/modules/fs.ts": "ca1934f1354066cddc6d11620b939a0e583eb0309a721c3f8e5c9f2f913ce4b3",
     "shiro/node-compat/modules/http.ts": "5c20aabbdcc426d788af3550a9c196e5bd0643429f07a8882039d0f3b7419779",
     "shiro/node-compat/modules/misc.ts": "909777cf8ed5e4bb8df31b9505b8f9e3bf87ad4d9f277b2abc53b7fd8ba27f0e",
     "shiro/node-compat/modules/net-tls.ts": "ba3b1e682acea8103e8481173c47f601c786e333ef117bb6c3aa219bfde927bc",
