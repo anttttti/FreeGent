@@ -12,7 +12,7 @@ import { buildRedactedChatJson } from './convo-log.js';
 import { KEYS, chatKey } from './storage-keys.js';
 import { escapeHtml } from './html-escape.js';
 import { lease, revokeLeases } from './lease.js';
-import { guestModeOn, getCfKeysDiagnostics } from './config.js';
+import { guestModeOn, getCfKeysDiagnostics, cfWorkerKeysSettled } from './config.js';
 import { storedCredentialValues } from './stored-credentials.js';
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
@@ -873,7 +873,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Wait for the current Worker answer before sending a keyless visitor to Credentials. A failed
     // lookup is unknown, not disabled; re-check saved keys in case one was entered while it ran.
-    workerKeys?.then(() => {
+    workerKeys?.then(() => cfWorkerKeysSettled()).then(() => {   // the newest lookup: a refocus meanwhile may have superseded the first
         if (getCfKeysDiagnostics().guestKnown && !guestModeOn() && !storedCredentialValues().length)
             showSettings('credentials');
     });

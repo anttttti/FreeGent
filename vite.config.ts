@@ -119,7 +119,7 @@ export default defineConfig(() => {
     if (BIND === '127.0.0.1') return;
     server.httpServer?.once('listening', () => setTimeout(() => {
       console.log('\n  FreeGent: open one of these URLs on each device:');
-      for (const u of lanUrls(PORT, https, token)) console.log(`    ${u}`);
+      for (const u of lanUrls(PORT, https, token, (process.env.FG_ALLOWED_ORIGINS ?? '').split(',').map(x => x.trim()).filter(Boolean))) console.log(`    ${u}`);
       console.log('');
     }, 50));
   }

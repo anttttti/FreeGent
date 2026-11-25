@@ -932,7 +932,11 @@ function _cfKeysRerender(): void {
 /** When the last /keys lookup finished (ms), for refreshing it now and then: the guest quota can be switched at any time. */
 export function cfWorkerKeysLoadedAt(): number { return _cfKeysLoadedAt; }
 
-export async function loadCfWorkerKeys(): Promise<void> {
+let _cfKeysLatest: Promise<void> = Promise.resolve();
+/** The newest /keys lookup, however many started meanwhile: an older one that was superseded returns early with nothing known (review of 9431df2). */
+export async function cfWorkerKeysSettled(): Promise<void> { let p: Promise<void>; do { p = _cfKeysLatest; await p.catch(() => {}); } while (p !== _cfKeysLatest); }
+export function loadCfWorkerKeys(): Promise<void> { const p = _loadCfWorkerKeys(); _cfKeysLatest = p; return p; }
+async function _loadCfWorkerKeys(): Promise<void> {
     const proxy = typeof getLocalApiProxy === 'function' ? getLocalApiProxy() : '';
     let passSet = false;
     try { passSet = !!getDevKey(); } catch {}
@@ -1463,7 +1467,7 @@ Object.assign(window, {
     getHiddenModels, saveHiddenModels, hideBuiltinModel, unhideBuiltinModel,
     getAllModels, canonicalModelId, getModelSuccessCounts, recordModelSuccess, isBlacklistedModel, FREE_MODEL_BLACKLIST, getMainModelList, mainModelListIsEmptyByChoice, saveMainModelList, resetMainModelList,
     getPausedMainModels, savePausedMainModels,
-    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn, guestModeOn,
+    getActiveMainModelList, specHasKey, entryNeedsNoKey, specBlockedByPrivacy, loadCfWorkerKeys, getCfKeysDiagnostics, hasCfTavilyKey, hasCfBraveKey, guestQuotaOn, guestModeOn, cfWorkerKeysSettled,
     getMediaCapableSpec, getImageModel, getAudioModel, getVideoModel,
     saveImageModel, saveAudioModel, saveVideoModel, getAllModelsForMedia,
     getWorkerModel, saveWorkerModel, getEffectiveWorkerModel,

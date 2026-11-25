@@ -72,6 +72,11 @@ describe('lanUrls', () => {
         expect(urls.every(u => u.endsWith('#fg_token=tok_abc'))).toBe(true);
         expect(lanUrls(5173, true)[0]).toBe('https://localhost:5173/');
     });
+    it('prints the token URL of a configured host name too (review of 16a8b2e)', () => {
+        const urls = lanUrls(5173, true, 'tok_abc', ['https://fg.home.example:5173', 'not a url']);
+        expect(urls).toContain('https://fg.home.example:5173/#fg_token=tok_abc');
+        expect(urls.filter(u => u.includes('fg.home.example'))).toHaveLength(1);
+    });
 });
 
 describe('isSelfTarget', () => {

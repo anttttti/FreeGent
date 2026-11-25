@@ -167,6 +167,20 @@ describe('update_task_status', () => {
         }
     });
 
+    it('an in-progress task whose agent is still editing project files is not put back to open (review of b0c3c0f)', async () => {
+        files.set('fg-tasks/001-a.md', TASK.replace('id: 007', 'id: 001').replace(/status: \S+/, 'status: in-progress'));
+        files.set('fg-tasks/002-b.md', TASK.replace('id: 007', 'id: 002'));
+        const savedLoad = W.loadTaskFiles, savedMtime = W.agentFileMtime, savedList = W.agentListFiles;
+        W.loadTaskFiles = async () => [...files].filter(([p]) => /^fg-tasks\/\d+-/.test(p)).map(([p, c]) => ({ path: p, fm: W.parseFrontmatter(c) }));
+        W.agentFileMtime = async () => Date.now() - 3600_000;                                   // the task file untouched for an hour
+        W.agentListFiles = async () => [{ name: 'fg-tasks/001-a.md', lastModified: Date.now() - 3600_000 }, { name: 'src/app.js', lastModified: Date.now() - 60_000 }];   // a source file edited a minute ago
+        try {
+            const r = await W.executeToolAsync('update_task_status', { path: 'fg-tasks/002-b.md', status: 'in-progress' }, null);
+            expect(r.ok).toBe(false);
+            expect(r.reason).toMatch(/Only one task may be in-progress/);
+        } finally { W.loadTaskFiles = savedLoad; W.agentFileMtime = savedMtime; W.agentListFiles = savedList; }
+    });
+
     // Audit §4.3 — setTaskStatus used to swallow write failures, so an unwritable
     // workspace produced ok:true (and, since the status never changed on disk, made the
     // autopilot/agent-loop task selectors re-pick the same task forever).

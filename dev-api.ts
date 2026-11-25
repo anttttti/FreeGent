@@ -1201,14 +1201,19 @@ export function injectClientScript(html: string, script: string): string {
 }
 
 // URLs to open from other devices when the server is LAN-bound.
-export function lanUrls(port: number, https: boolean, token = ''): string[] {
+export function lanUrls(port: number, https: boolean, token = '', allowedOrigins: Iterable<string> = []): string[] {
     const proto = https ? 'https' : 'http';
     const ips = Object.values(networkInterfaces()).flat()
         .filter((i): i is NonNullable<typeof i> => !!i && !i.internal && i.family === 'IPv4')
         .map(i => i.address);
     // The token rides in the fragment (never sent to a server); the page script keeps it and strips it from the address bar. SECURITY.md: a LAN-bound server does not embed it.
     const frag = token ? `#fg_token=${token}` : '';
-    return [`${proto}://localhost:${port}/${frag}`, ...ips.map(ip => `${proto}://${ip}:${port}/${frag}`)];
+    const urls = [`${proto}://localhost:${port}/${frag}`, ...ips.map(ip => `${proto}://${ip}:${port}/${frag}`)];
+    // An origin the person configured (a host name for the passkey lock, which needs one) is a place to open the page: a token saved on an IP origin is not there (review of 16a8b2e).
+    for (const o of allowedOrigins) {
+        try { const u = new URL(o); if (/^https?:$/.test(u.protocol) && !urls.some(x => x.startsWith(u.origin + '/'))) urls.push(`${u.origin}/${frag}`); } catch {}
+    }
+    return urls;
 }
 
 // ── Exec sandbox bundle ───────────────────────────────────────────────────────

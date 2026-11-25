@@ -1316,10 +1316,13 @@ async function _handleUpdateTaskStatus(args: any) {
                 // An in-progress task nothing is working on (its chat died with the tab, the run was stopped) must not hold the board: untouched for 15 minutes and not the
                 // runner's own, it is put back to open. Uploaded logs: a chat could not start the next task while an abandoned one sat In Progress.
                 const running = (window as any).isRunnerRunning?.() ?? false;
+                // Work on the project counts as activity too: an agent editing source files for 15 minutes leaves its task file untouched, and must not lose its task (review of b0c3c0f).
+                let wsNewest = 0;
+                if (others.length) { try { for (const f of (await agentListFiles()) || []) if (f?.name && !/^(?:local\/)?(?:fg-tasks|memory)\//.test(f.name)) wsNewest = Math.max(wsNewest, Number(f.lastModified) || 0); } catch {} }
                 for (let i = others.length - 1; i >= 0; i--) {
                     const t = others[i];
                     const mt = await (window as any).agentFileMtime(t.path).catch(() => null);
-                    if (mt != null && Date.now() - mt > 15 * 60_000 && !(running && (window as any).runnerStartedTask?.(t.path))) {
+                    if (mt != null && Date.now() - Math.max(mt, wsNewest) > 15 * 60_000 && !(running && (window as any).runnerStartedTask?.(t.path))) {
                         try { await setTaskStatus(t.path, 'open'); others.splice(i, 1); } catch {}
                     }
                 }

@@ -3704,6 +3704,7 @@ async function _restoreProjectData(data) {
     try { (window as any).updateRailRecentChats?.(); } catch {}
     loadAgentsContext?.();
     loadSkills?.();
+    loadRoles?.();   // after the folder was detached and the new files written: the final refresh left roles out (review of 08bc946)
     // The board still showed the replaced workspace's tasks until something else refreshed it.
     try { await (window as any).syncLedgerWithTaskFiles?.(); } catch { try { await (window as any).refreshTasks?.(); } catch {} }
     if (notSaved.length) console.warn(`[import] the session store refused the history of ${notSaved.length} imported chat(s): ${notSaved.join(', ')}; the imported cache is kept as the newer copy and is saved again with the next message`);
