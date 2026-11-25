@@ -1,11 +1,11 @@
 // tests/guest-quota.test.ts — the guest quota on the page (guest-quota.ts): the offer a keyless send gets on a hosted
 // page, and the watch that keeps the Worker's /keys answer fresh when the quota is switched or used up.
-const state = vi.hoisted(() => ({ guest: false, mode: false, level: 'provider', chosen: false, pausedUntil: 0, loads: 0, daily: 150 }));
+const state = vi.hoisted(() => ({ guest: false, mode: false, known: true, level: 'provider', chosen: false, pausedUntil: 0, loads: 0, daily: 150 }));
 vi.mock('../config.js', () => ({
     guestQuotaOn: () => state.guest,
     loadCfWorkerKeys: vi.fn(async () => { state.loads++; }),
     guestModeOn: () => state.mode,
-    getCfKeysDiagnostics: () => ({ loaded: true }),
+    getCfKeysDiagnostics: () => ({ loaded: true, guestKnown: state.known }),
     guestQuotaDaily: () => state.daily,
     guestQuotaPausedUntil: () => state.pausedUntil,
     pauseGuestQuota: (t: number) => { state.pausedUntil = t; },
@@ -110,7 +110,7 @@ describe('guest quota watch', () => {
 describe('Guest access status (Settings → Models)', () => {
     let el: HTMLElement;
     beforeEach(() => {
-        Object.assign(state, { mode: false, pausedUntil: 0 });
+        Object.assign(state, { mode: false, known: true, pausedUntil: 0 });
         document.getElementById('guest-access-status')?.remove();
         document.body.insertAdjacentHTML('beforeend', '<span id="guest-access-status"></span>');
         el = document.getElementById('guest-access-status')!;
@@ -126,6 +126,12 @@ describe('Guest access status (Settings → Models)', () => {
         expect(el.classList.contains('guest-access-on')).toBe(true);
         expect(el.dataset.tip).toMatch(/Groq, Kilo, OpenRouter or TokenHarbor.*150 requests a day per network\.$/);   // nothing after it
         expect(el.getAttribute('aria-label')).toMatch(/^Guest access: Enabled\. FreeGent's Worker has guest access on/);   // read out on focus
+    });
+
+    it('a Worker reply without the guestMode field is Unknown, not Disabled (review of 9431df2)', () => {
+        state.known = false;
+        renderGuestAccess();
+        expect(el.textContent).toBe('Guest access: Unknown');
     });
 
     it('is a status only: nothing on the page switches it', () => {

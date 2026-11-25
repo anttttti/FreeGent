@@ -964,6 +964,7 @@ export async function loadCfWorkerKeys(): Promise<void> {
                 _cfWorkerKeys = data;
                 _cfKeysLoadedAt = Date.now();
                 _cfKeysDiag.loaded = true;
+                _cfKeysDiag.guestKnown = typeof data.guestMode === 'boolean';   // a proxy that answers without the field says nothing about guest access (review of 9431df2)
                 _cfKeysDiag.keys = Object.keys(data).filter(k => data[k]);
             }
         }

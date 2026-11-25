@@ -1252,7 +1252,10 @@ async function _handleCheckPage(args: any) {
     // No path: the project's page, as the done gate finds it (root index.html, else the only .html at the root). 34 calls in 145 chats left it out
     // and were refused (kanbanflow 2026-11-08).
     if (!path) {
-        path = rootPageOf(((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter((n: any) => typeof n === 'string')) ?? '';
+        let listed: any[] = [];
+        try { listed = (await agentListFiles()) || []; }
+        catch (e: any) { return { error: `check_page: the workspace could not be listed (${String(e?.message ?? e).slice(0, 120)}), so no default page was found: pass the .html file, e.g. {"path": "index.html"}.` }; }   // a failed listing is not an empty project (review of c8ec6fd)
+        path = rootPageOf(listed.map((f: any) => f?.name).filter((n: any) => typeof n === 'string')) ?? '';
     }
     if (!/\.html?$/i.test(path)) return { error: `check_page loads an HTML page — pass the .html file, e.g. {"path": "index.html"}.${args?.path ? ` Got ${JSON.stringify(args.path)}.` : ''}` };
     try {

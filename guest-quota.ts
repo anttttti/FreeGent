@@ -115,7 +115,7 @@ export function renderGuestAccess(): void {
     if (!el) return;
     const on = guestModeOn();
     const diag = getCfKeysDiagnostics();
-    const known = !!diag.loaded;
+    const known = !!diag.loaded && !!diag.guestKnown;
     const daily = guestQuotaDaily();
     const checking = !known && !diag.skipped && !diag.error && diag.status == null && !!diag.proxy;
     el.textContent = `Guest access: ${known ? on ? 'Enabled' : 'Disabled' : checking ? 'Checking…' : 'Unknown'}`;

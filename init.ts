@@ -873,7 +873,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Wait for the current Worker answer before sending a keyless visitor to Credentials. A failed
     // lookup is unknown, not disabled; re-check saved keys in case one was entered while it ran.
     workerKeys?.then(() => {
-        if (getCfKeysDiagnostics().loaded && !guestModeOn() && !storedCredentialValues().length)
+        if (getCfKeysDiagnostics().guestKnown && !guestModeOn() && !storedCredentialValues().length)
             showSettings('credentials');
     });
 
