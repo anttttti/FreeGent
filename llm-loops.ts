@@ -503,6 +503,11 @@ const READ_STUBS_BEFORE_PAUSE = 2;
 // Whole-file reads longer than this may be cut down before the model sees them — not "covered".
 const _READ_LEDGER_FULL_MAX_CHARS = 15_000;
 
+// The paths a run_workers result says reached the project: what a worker staged is not that (a failed commit, a binary conflict with neither version applied). The completion gates read these (reviews of 7bd4d5d, a15a727).
+function _appliedWrites(result: any, a: any): string[] {
+    const ok = new Set<string>([...(Array.isArray(result?.applied) ? result.applied : []), ...(Array.isArray(result?.conflictsResolved) ? result.conflictsResolved : [])].map(String));
+    return (Array.isArray(a?.wrote) ? a.wrote : []).map(String).filter((p: string) => ok.has(p));
+}
 function _readRange(args: any): [number, number] {
     // The spellings read_file accepts: start/end, and offset/limit (the other harnesses' convention). The ledger saw only start_line/end_line, so a read of lines 100-149
     // by offset/limit was recorded as the whole file and a later read of other lines was answered "already in history" (review of 16a8b2e).
@@ -2340,7 +2345,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         if (results.some(r => CONTENT_ARG_TOOLS.has(r.name) && !r.result?.error && !String(r.result?.path ?? '').startsWith('fg-tasks/')))
             _editsThisRun = true;
         // What workers committed is an edit of this run too (codex R786, R787).
-        if (!_editsThisRun && results.some(r => r.name === 'run_workers' && !r.result?.error && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !String(p).startsWith('fg-tasks/')))))
+        if (!_editsThisRun && results.some(r => r.name === 'run_workers' && !r.result?.error && (r.result?.agents ?? []).some((a: any) => _appliedWrites(r.result, a).some((p: string) => !p.startsWith('fg-tasks/')))))
             _editsThisRun = true;
         // Also set _editsThisRun when execute_code writes workspace files (Director-role benchmarks
         // have no write_file, so the gate only fires if bash/python wrote files — detected via
@@ -2367,7 +2372,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 for (const p of r.result.files_written) _editedPaths.add(String(p));
             } else if (r.name === 'run_workers') {
                 // What workers committed is a change of this run as much as the director's own edit: the invented-data gate looks at this set (codex R661).
-                for (const a of r.result?.agents ?? []) for (const p of (Array.isArray(a?.wrote) ? a.wrote : [])) if (!String(p).startsWith('fg-tasks/')) _editedPaths.add(String(p));
+                for (const a of r.result?.agents ?? []) for (const p of _appliedWrites(r.result, a)) if (!p.startsWith('fg-tasks/')) _editedPaths.add(p);
             }
         }
         if (results.some(r => !r.result?.error && (r.name === 'run_workers' || r.name === 'write_file'
@@ -2377,7 +2382,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         // For directorLoop's closing turn: a project (non-scratch) file changed, by the director or a
         // worker. Repro/debug scripts alone don't make a fix worth finishing.
         if ([..._editedPaths].some(p => !isScratchPath(p)) || results.some(r => r.name === 'run_workers'
-            && (r.result?.agents ?? []).some((a: any) => Array.isArray(a?.wrote) && a.wrote.some((p: any) => !isScratchPath(String(p))))))
+            && (r.result?.agents ?? []).some((a: any) => _appliedWrites(r.result, a).some((p: string) => !isScratchPath(p)))))
             _turnStop.edited = true;
         // Track successful execute_code — feeds step_validation advisory mode.
         // A prior successful exec means the model can already use tools; further

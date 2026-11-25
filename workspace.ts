@@ -1311,8 +1311,8 @@ export async function openCloudSyncDialog(): Promise<void> {
             apply: (its, chosen) => _applyCloudSync({ client, slug, remote, ws, base, items: its, chosen, merges }),
             onApplyError: () => { openCloudSyncDialog(); },      // the cloud may have moved on: compare again, Replace options included
             extra: [
-                { label: 'Replace cloud…', title: 'Make the cloud copy identical to this Workspace (uploads changes, deletes cloud-only files)', run: () => { _cloudReplace('cloud', items, { client, slug, remote, ws, base }); } },
-                { label: 'Replace Workspace…', title: 'Make this Workspace identical to the cloud copy (downloads changes, deletes Workspace-only files)', run: () => { _cloudReplace('workspace', items, { client, slug, remote, ws, base }); } },
+                { label: 'Replace cloud…', title: 'Make the cloud copy identical to this Workspace (uploads changes, deletes cloud-only files)', run: () => { _cloudReplace('cloud', items, { client, slug, remote, ws, base }, epoch); } },
+                { label: 'Replace Workspace…', title: 'Make this Workspace identical to the cloud copy (downloads changes, deletes Workspace-only files)', run: () => { _cloudReplace('workspace', items, { client, slug, remote, ws, base }, epoch); } },
             ],
         });
     } catch (e: any) {
@@ -1334,7 +1334,9 @@ function _replaceItems(items: SyncItem[], target: 'cloud' | 'workspace'): SyncIt
 }
 
 async function _cloudReplace(target: 'cloud' | 'workspace', items: SyncItem[], c: { client: CloudSyncClient; slug: string; remote: { etag: string | null; manifest: CloudManifest };
-                                                                                    ws: { files: Record<string, CloudFile>; hashes: Record<string, string> }; base: Record<string, string> }): Promise<void> {
+                                                                                    ws: { files: Record<string, CloudFile>; hashes: Record<string, string> }; base: Record<string, string> }, epoch?: number): Promise<void> {
+    // The comparison was made in a project that has been cleared or replaced since: Replace would overwrite or delete in the new one (review of 7bd4d5d).
+    if (epoch !== undefined && workspaceEpoch() !== epoch) { alert('The project was cleared or replaced since this comparison was made. Open the cloud sync again.'); return; }
     const its = _replaceItems(items, target);
     const put = its.filter(i => i.action === 'to-local' || i.action === 'to-workspace').length;
     const del = its.length - put;
@@ -1342,6 +1344,7 @@ async function _cloudReplace(target: 'cloud' | 'workspace', items: SyncItem[], c
         ? `Replace the cloud copy of “${c.slug}” with this Workspace?\n\nUploads ${put} file${put === 1 ? '' : 's'} and deletes ${del} file${del === 1 ? '' : 's'} that only the cloud has. The cloud’s versions cannot be restored afterwards.`
         : `Replace this Workspace with the cloud copy of “${c.slug}”?\n\nDownloads ${put} file${put === 1 ? '' : 's'} (overwriting different ones) and deletes ${del} Workspace file${del === 1 ? '' : 's'} the cloud does not have. “Undo last sync” can restore them.`;
     if (!confirm(msg)) return;
+    if (epoch !== undefined && workspaceEpoch() !== epoch) { alert('The project was cleared or replaced while this was open, so nothing was changed.'); return; }
     try {
         const res = await _applyCloudSync({ ...c, items: its, chosen: new Map(), merges: {} });
         alert(target === 'cloud' ? `The cloud copy now matches this Workspace (${res.changed} change${res.changed === 1 ? '' : 's'}).` : `This Workspace now matches the cloud copy (${res.changed} change${res.changed === 1 ? '' : 's'}).`);
@@ -1591,7 +1594,8 @@ export async function agentReadFile(path) {
         if (rec.encoding === 'base64') return await _readBase64Record(path, rec.content);
         return rec.content;
     }
-    try { return await _fsaRead(path); } catch {}
+    // Only a file the folder does not have is "not found"; one it has and cannot read keeps its own error (review of de28506): a caller must be able to tell absence from not knowing.
+    try { return await _fsaRead(path); } catch (e: any) { if (fsaHandle && /^(?:NotAllowedError|NotReadableError|SecurityError|AbortError)$/.test(String(e?.name))) throw new Error(`Could not read ${path}: ${e?.message || e?.name || e}`); }
     throw new Error(`File not found: ${path}`);
 }
 

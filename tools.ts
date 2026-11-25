@@ -615,8 +615,9 @@ export function approvalSummary(toolName: string, args: any): string {
     if (toolName === 'browser_type' && typeof args.text === 'string') summary += `: types "${clip(args.text, 120)}"${args.submit ? ' and presses Enter' : ''}`;
     if (toolName === 'browser_select' && Array.isArray(args.values)) summary += `: chooses ${clip(args.values.map((v: any) => `"${v}"`).join(', '), 200)}`;
     // Show what will run, not just which tool.
+    // An MCP call is summarised whole below, whatever its argument names: a `code` argument shown alone hid the record it replaces (review of 7bd4d5d).
     const cmd = toolName === 'run_git' ? ['git', ...runGitArgv(args)].join(' ')
-        : (typeof args.code === 'string' ? args.code : '');
+        : (!toolName.startsWith('mcp__') && typeof args.code === 'string' ? args.code : '');
     if (cmd) summary += `: ${clip(cmd, 300)}`;
     // An MCP call: what it is sent, so the person approves the action and not just a tool name (codex R708).
     else if (toolName.startsWith('mcp__') && Object.keys(args).length) { try { summary += `: ${clip(JSON.stringify(args), 300)}`; } catch {} }
@@ -673,7 +674,7 @@ function _runsOnHost(name: string, args: any): boolean {
     if (runtime.hasNativeExec) return false;   // headless: the runner's own sandboxing applies
     if (name === 'run_git') return true;
     if (name !== 'execute_code' || getSandboxProvider() !== 'local') return false;
-    const lang = args?.language;
+    const lang = args?.language ?? 'bash';   // a call without a language is run as bash: it is judged as bash, not as Python (review of de28506)
     if (lang === 'javascript') return false;   // always the browser sandbox
     // Only treat Python as browser-only when Pyodide is definitively ready.
     // 'loading' is uncertain: if loading fails, execution falls through to /api/execute on the
@@ -2988,7 +2989,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const spent = plan.send.reduce((n, r) => n + String(r.content ?? '').length, 0);
                 await addLiveFolderInput({ list: agentListFiles, read: agentReadFile, maxChars: EXEC_FILE_MAX_CHARS, put: (n, c) => { files[n] = c; }, snap: sentSnap, omitted, sizes: folderSizes, large: folderLarge,
                     budget: { chars: Math.max(0, EXEC_COPY_MAX_CHARS - spent), named: n => namesFile(args.code, n) } });
-                for (const n of omitted) if (!(n in files)) files[n] = { omitted: folderSizes.get(n) ?? 0, ...(folderLarge.has(n) ? { large: true } : {}) };
+                for (const n of omitted) if (!(n in files) || folderSizes.has(n)) files[n] = { omitted: folderSizes.get(n) ?? 0, ...(folderLarge.has(n) ? { large: true } : {}) };   // a live file left out replaces a smaller imported copy of the same path: the run must not see, change or delete it (review of d385ad1)
             } catch {}
             // The code runs in the exec sandbox frame (opaque origin: no access to the page, its
             // storage or the dev server) with fs/path over this copy of the files, at /workspace
@@ -3097,6 +3098,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                 const changedMeanwhile = await staleGuard(sentSnap, omitted, withLiveFiles(listWorkspaceFiles, agentReadFile, [...(execResult.files_deleted ?? []), ...Object.keys(execResult.files_written ?? {})]));
                 // Files the run removed or renamed away
                 for (const path of (execResult.files_deleted ?? []) as string[]) {
+                    if (omitted.has(path)) { writeErrors.push(omittedFileDeleteMessage(path)); continue; }   // a file the run could not see is not deleted by it (review of d385ad1)
                     if (changedMeanwhile(path)) { writeErrors.push(`delete ${path}: the file changed while the command ran; kept the newer version`); continue; }
                     try { await agentDeleteFile(path, { epoch: snapshotEpoch(sentSnap) }); } catch (e) { writeErrors.push(`delete ${path}: ${e.message ?? e}`); continue; }
                     if (context?.staging) context.staging.set(path, null);

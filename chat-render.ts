@@ -4,7 +4,7 @@ import { mainAgentRole } from './state.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { _stripTerminal } from './turn-protocol.js';
 import { escapeHtml } from './html-escape.js';
-import { getPrivacyLevel, isLocalAddress } from './privacy.js';
+import { getPrivacyLevel, isLocalAddress, sandboxCspMeta } from './privacy.js';
 import { friendlyLabel } from './step-label.js';
 import { requestKeeper, trimKeptRequest } from './request-trim.js';
 
@@ -25,7 +25,8 @@ function _makeSvgObject(svgText) {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', '');
     iframe.style.cssText = `display:block;width:min(100%,${w}px);aspect-ratio:${w}/${h};border:none;border-radius:6px;margin:6px 0;`;
-    iframe.srcdoc = `<!DOCTYPE html><html><head><style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}svg{width:100%!important;height:100%!important;display:block;}</style></head><body>${svgText}</body></html>`;
+    // At the Local level the frame's own requests are limited like the code sandbox's: an <image href="https://…"> in a model's SVG is a request out (review of de2c857).
+    iframe.srcdoc = `<!DOCTYPE html><html><head>${sandboxCspMeta()}<style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}svg{width:100%!important;height:100%!important;display:block;}</style></head><body>${svgText}</body></html>`;
     return iframe;
 }
 

@@ -859,13 +859,13 @@ export function createDevApi(opts: DevApiOptions) {
                 for (const entry of await readdir(dir, { withFileTypes: true })) {
                     const abs = join(dir, entry.name);
                     if (entry.isDirectory()) { await walk(abs); continue; }
-                    seen.add(relative(tmpDir!, abs));
+                    seen.add(relative(tmpDir!, abs).split(sep).join('/'));   // a path as the workspace spells it, on Windows too (review of d385ad1)
                     // Skip symlinks: agent code inside the sandbox can create a dangling symlink
                     // to any host path (e.g. ~/.config/freegent/credentials), and readFile would
                     // follow it outside the sandbox namespace. O_NOFOLLOW is a second line of
                     // defence against a TOCTOU race between isSymbolicLink and the open.
                     if (entry.isSymbolicLink()) continue;
-                    const rel = relative(tmpDir!, abs);
+                    const rel = relative(tmpDir!, abs).split(sep).join('/');
                     try {
                         const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
                         const size = (await fh.stat()).size;

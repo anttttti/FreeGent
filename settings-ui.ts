@@ -226,6 +226,8 @@ function onPrivacyLevelChange(level: string) {
     const wasPy = pyodideStatus === 'ready';
     resetSandbox('the privacy level changed; the code sandbox was restarted with its rules');
     if (wasPy) (window as any).startPyodide?.()?.catch?.(() => {});
+    // Open page previews carry the policy they were built with: rebuilt now, so a preview opened under Routed cannot submit to a remote host after the switch to Local (review of de2c857).
+    try { (window as any).scheduleArtifactRefresh?.(''); } catch {}
 }
 
 function onPrivacyChange(which: 'geo' | 'analytics', checked: boolean) {

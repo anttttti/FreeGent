@@ -98,5 +98,6 @@ describe('browser action approvals', () => {
         const { approvalSummary } = await import('../tools.ts');
         expect(approvalSummary('mcp__crm__delete_contact', { id: 42, hard: true })).toBe('mcp__crm__delete_contact: {"id":42,"hard":true}');
         expect(approvalSummary('mcp__crm__list', {})).toBe('mcp__crm__list');
+        expect(approvalSummary('mcp__crm__update_script', { id: 42, code: 'run()' })).toBe('mcp__crm__update_script: {"id":42,"code":"run()"}');   // a `code` argument does not hide the rest (review of 7bd4d5d)
     });
 });

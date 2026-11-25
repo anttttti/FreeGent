@@ -374,6 +374,27 @@ describe('SessionRegistry', () => {
             expect(texts).toEqual(expect.arrayContaining(['shared start', 'child only']));
             await fs.rm(dir, { recursive: true, force: true });
         });
+
+        it('a resumed fork that gets another message keeps it on disk across a second resume (review of 7bd4d5d)', async () => {
+            const dir = `/tmp/fg-test-session-fork2-${Date.now()}`;
+            const { default: fs } = await import('node:fs/promises');
+            await fs.mkdir(`${dir}/events`, { recursive: true });
+            reg.setPersistence(initPersistence(dir, 0));
+            const parent = reg.create({ id: 'par2', chatId: 'c' });
+            parent.append('user/message', { role: 'user', content: 'shared start' }, { surfaceOp: 'append' });
+            const child = reg.fork(parent);
+            await reg.flush();
+            const reg2 = new SessionRegistry();
+            reg2.setPersistence(initPersistence(dir, 0));
+            const back = await reg2.resume(child.id);
+            back.append('user/message', { role: 'user', content: 'after resume' }, { surfaceOp: 'append' });
+            await reg2.flush();
+            const reg3 = new SessionRegistry();
+            reg3.setPersistence(initPersistence(dir, 0));
+            const again = await reg3.resume(child.id);
+            expect(again.deriveMessages().map(m => String(m.content))).toEqual(expect.arrayContaining(['shared start', 'after resume']));
+            await fs.rm(dir, { recursive: true, force: true });
+        });
     });
 });
 

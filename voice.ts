@@ -226,9 +226,11 @@ function _webSpeechSpeak(text) {
     window.speechSynthesis.speak(utt);
 }
 
+let _ttsSeq = 0;   // the newest speech request: an older one that answers late, or one made before Stop, does not play (review of de28506)
 async function _apiSpeak(text, key, provider, model, entryKey) {
     const url = _speechUrl(provider);
     if (!url) return;
+    const mine = ++_ttsSeq;
     const voiceId = localStorage.getItem(voiceApivKey(entryKey))
                  || _TTS_VOICE_DEFAULTS[entryKey]
                  || 'alloy';
@@ -240,6 +242,7 @@ async function _apiSpeak(text, key, provider, model, entryKey) {
         });
         if (!r.ok) { console.error('[voice] TTS error:', await r.text()); return; }
         const blob    = await r.blob();
+        if (mine !== _ttsSeq) return;
         _releaseTtsAudio();
         _ttsUrl = URL.createObjectURL(blob);
         const audio = _ttsAudio = new Audio(_ttsUrl);
@@ -265,6 +268,7 @@ function _cleanForSpeech(text) {
 }
 
 function stopSpeaking() {
+    _ttsSeq++;
     window.speechSynthesis?.cancel();
     _releaseTtsAudio();
 }
