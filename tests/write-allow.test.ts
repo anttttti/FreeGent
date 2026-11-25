@@ -67,4 +67,14 @@ describe('the tools obey it', () => {
         }
         expect(files.get('src/app.ts')).toBe('ORIGINAL');
     });
+
+    it('the workspace-root redirect is judged too: `workspace/out/a.md` lands on out/a.md (review of 80372e3)', async () => {
+        setWriteAllow(parseWriteAllow('out/'));
+        expect((await run('write_file', { path: 'workspace/out/a.md', content: 'hi' })).error).toBeUndefined();
+        expect(files.get('out/a.md')).toBe('hi');
+        setWriteAllow(parseWriteAllow('workspace/out/'));
+        const r = await run('write_file', { path: 'workspace/out/b.md', content: 'x' });
+        expect(r.error).toMatch(/outside the paths this run may write/);   // it would have landed on out/b.md, outside the list
+        expect(files.has('out/b.md')).toBe(false);
+    });
 });

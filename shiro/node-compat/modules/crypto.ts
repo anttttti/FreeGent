@@ -110,7 +110,7 @@ export function createCryptoModule(deps: CryptoDeps): any {
       for (let i = 0; i < x.length; i++) result |= x[i] ^ y[i];
       return result === 0;
     },
-    getHashes: () => ['sha1', 'sha256', 'sha384', 'sha512', 'md5'],
+    getHashes: () => ['md5', 'sha1', 'sha256'],   // exactly what createHash accepts (a package that picks sha512 from this list threw; review of 73d5912)
     getCiphers: () => ['aes-256-cbc', 'aes-128-cbc', 'aes-256-gcm'],
     createPrivateKey: (key: any) => ({ type: 'private', export: () => key }),
     createPublicKey: (key: any) => ({ type: 'public', export: () => key }),

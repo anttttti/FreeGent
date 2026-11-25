@@ -13,6 +13,15 @@ describe('credentialFreeSettings', () => {
         expect(JSON.parse(out.fg_custom_models)).toEqual([{ model: 'a' }, { model: 'b', url: 'u' }]);
         expect(JSON.stringify(out)).not.toMatch(/S1|S2|Bearer|pw@|sk-secret/);
     });
+    it('a credential in a URL\'s query string goes too, at the top level and inside a custom model (review of 75c664a)', () => {
+        const out = credentialFreeSettings({
+            fg_openai_url: 'https://api.example/v1?api_key=SECRETQ', fg_search_proxy: 'https://proxy.example/s?q=1', fg_x_url: 'https://h.example/v1?access_token=TOK',
+            fg_custom_models: JSON.stringify([{ model: 'a', url: 'https://m.example/v1?key=ABC', label: 'A' }, { model: 'b', url: 'https://m.example/v1' }]),
+        });
+        expect(Object.keys(out).sort()).toEqual(['fg_custom_models', 'fg_search_proxy']);
+        expect(JSON.parse(out.fg_custom_models)).toEqual([{ model: 'a', label: 'A' }, { model: 'b', url: 'https://m.example/v1' }]);
+        expect(JSON.stringify(out)).not.toMatch(/SECRETQ|ABC|TOK/);
+    });
     it('a custom-models value that is not a list is dropped, not passed on', () => {
         expect('fg_custom_models' in credentialFreeSettings({ fg_custom_models: '{"key":"S"' })).toBe(false);
     });

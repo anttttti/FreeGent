@@ -224,8 +224,9 @@ export class SessionPersistence {
                             if (size! + bytes > this.limits.maxFileBytes) {
                                 console.warn(`[session-persistence] ${id}: event log reached ${this.limits.maxFileBytes} bytes; later events are not written`);
                                 // One marker line (not an event) so that load() can say the tail is missing; a resumed session otherwise looked complete (review 2026-11-12 H03).
+                                // The marker always starts on its own line (a blank line is skipped on load): a log whose last write was torn, in an earlier run, has no newline to end on (review of a7f8091).
                                 // A failed append rejects and is retried with the batch, like an event write; the session counts as capped only once the marker is there (X004).
-                                await appendFile(path, (this.dirty.has(id) ? '\n' : '') + JSON.stringify({ capped: true, maxFileBytes: this.limits.maxFileBytes }) + '\n', 'utf8');
+                                await appendFile(path, '\n' + JSON.stringify({ capped: true, maxFileBytes: this.limits.maxFileBytes }) + '\n', 'utf8');
                                 this.capped.add(id);
                             } else {
                                 this.dirty.add(id);          // until the append is known to have completed

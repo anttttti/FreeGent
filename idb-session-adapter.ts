@@ -95,7 +95,14 @@ export class IDBSessionAdapter {
         db.onclose = () => { if (this._db === db) this.revive(true).catch(() => {}); };
         // A version change means the other way round from a closed connection: a newer build upgraded the database, this tab's code is older than
         // the data and can never reopen it (VersionError on every call, the session store dead and silent). Say so once and stop reviving (exploration G02).
-        db.onversionchange = () => { try { db.close(); } catch {} if (this._db === db) _tellOutdated(); };
+        // `versionchange` arrives before the other tab's upgrade has committed, and the upgrade can still abort: this tab closes the connection, then reopens it. The open waits for
+        // the upgrade; if it committed, the reopen fails (VersionError) and the tab is outdated, if it aborted the database is as it was and nothing is lost (review of e6d15e1).
+        db.onversionchange = () => {
+            try { db.close(); } catch {}
+            if (this._db !== db) return;
+            if (!this._reopen) { _tellOutdated(); return; }
+            this.revive(true).catch(() => { if (this._db === db) _tellOutdated(); });
+        };
     }
 
     /** Reopen the connection if the browser closed it (or `force`). Safe to call often. */
@@ -114,7 +121,9 @@ export class IDBSessionAdapter {
         return new Promise((resolve, reject) => {
             const tx = this._db.transaction('history', 'readonly');
             _latestGeneration(tx.objectStore('history'), chatId, resolve);
-            tx.onerror = () => reject(tx.error);
+            // The error event of a request reaches the transaction before tx.error is set: a null rejection skipped the reopen-and-retry (review of a7f8091).
+            tx.onerror = e => reject((e.target as any)?.error ?? tx.error ?? new Error('IndexedDB transaction failed'));
+            tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
         });
     }
 

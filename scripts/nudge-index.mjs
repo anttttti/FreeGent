@@ -17,6 +17,7 @@ const GATE_FILES = ['completion-gates.ts', 'bench-policy.ts'];
 
 /** What each nudge or gate is for (one line). A new name must get an entry here: `--check` fails without one. */
 export const WHEN = {
+    calls_capped: 'the reply had more tool calls than one step runs (20); the rest were dropped and the model is told which',
     bad_args: 'the arguments of a tool call were not valid JSON or arrived damaged (call markers of the model itself inside the argument names)',
     blocked_untried_fix: 'benchmark policy: BLOCKED declared before a fix was tried',
     broken_syntax: 'gate: COMPLETED while a file changed this turn (by the agent or a worker) no longer parses; names the error',

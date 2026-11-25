@@ -137,7 +137,7 @@ export async function _handleTurnState(textContent: string, step: number, ps: an
     //   old length>40 rule returned ps.saved here, which in multi-bounce chains was the
     //   bounced middle response — v0.12 AgentBench captured verbose garbage while the
     //   model's actual final message was the correct bare value (OS-12, DB-16).
-    if (ps.finalCheck > 0 && /\bCOMPLETED\b/.test(textContent) && _isComplete(textContent)) {
+    if (ps.finalCheck > 0 && /\bCOMPLETED\b/.test(textContent) && !_BLOCKED_DECLARATION_RE.test(textContent) && _isComplete(textContent)) {   // `BLOCKED: … never emitted COMPLETED …` declares a block, it is not the acknowledgment (review of 6ecd069)
         setLastTurnDoneToken(true);
         const newText = _stripTerminal(textContent).trim();
         const _isBareAck = !newText ||

@@ -372,16 +372,18 @@ export function isQuestionOnlyTask(task: string): boolean {
 const _USER_TASK_RE = /\b(?:users?|accounts?|groups?|useradd|adduser|sudoers?\.d)\b/i;
 export function testFixtures(task: string, commands: string[]): string[] {
     if (_USER_TASK_RE.test(task)) return [];
-    const made = new Set<string>(), files: Array<{ path: string; line: string }> = [];
+    const made = new Map<string, 'user' | 'group'>(), files: Array<{ path: string; line: string }> = [];
     for (const cmd of commands) for (const line of String(cmd).split(/\n|&&|;/)) {
         const u = /\b(useradd|adduser|groupadd)\s+(?:-\S+\s+(?:\S+\s+)?)*([A-Za-z_][\w.-]*)\s*$/.exec(line);
-        if (u) made.add(u[2]);
+        if (u) made.set(u[2], u[1] === 'groupadd' ? 'group' : 'user');   // a group is reported as a group (review of 808820d)
         const f = />>?\s*(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line) || /\btee\s+(?:-a\s+)?(\/etc\/sudoers\.d\/[\w.-]+)/.exec(line);
         if (f) files.push({ path: f[1], line });
     }
     if (!made.size) return [];
-    const out = [...made].map(n => `user ${n}`);
-    for (const f of files) if ([...made].some(n => f.line.includes(n))) out.push(f.path);
+    const out = [...made].map(([n, kind]) => `${kind} ${n}`);
+    // A sudoers rule belongs to a created user when it names that user as a whole word: `ops` is not `devops` (no lookbehind: this file ships to Safari < 16.4).
+    const names = (line: string) => [...made].some(([n, kind]) => kind === 'user' && new RegExp(`(?:^|[^\\w.-])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`).test(line));
+    for (const f of files) if (names(f.line) && !out.includes(f.path)) out.push(f.path);
     return out;
 }
 

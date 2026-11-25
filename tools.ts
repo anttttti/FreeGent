@@ -3351,7 +3351,7 @@ async function _executeToolAsyncInner(name, args, context = null, onProgress?: (
         }
         for (const t of targets.length ? targets : [args?.path]) {
             // Judge the identity the writer will use: its own normalisation (quotes, ./, the workspace root), not the raw string (O018: 11 of 13 equivalent forms of an allowed file were refused).
-            const why = checkWriteAllowed(name, typeof t === 'string' ? _normToolPath(t) : t);
+            const why = checkWriteAllowed(name, typeof t === 'string' ? await _rootRelativeToolPath(_normToolPath(t)) : t);   // and the workspace-root redirect the writers apply: `workspace/out/x` lands on `out/x` (review of 80372e3)
             if (why) return { error: why };
         }
     }

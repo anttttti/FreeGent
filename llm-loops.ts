@@ -1280,7 +1280,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
     // turn: a module-level flag was consumed by a concurrent worker's request and, when a turn ended
     // between setting and sending, leaked a forced tool call into the next turn (review 2026-10-14).
     let _forceToolCall = !!forceToolCall;
-    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0, _last400Key = '';
+    let _stepCount = 0, resultHashes = [], consecutiveToolFails = 0, _envFailSig = '', _envFailCount = 0, _envFailTotal = 0, _overflowStreak = 0, _droppedCalls = 0, _cutOffStreak = 0, _emptyStreak = 0, _compactStreak = 0, _rejectedStreak = 0, _last400Key = '';
     const _repeatCache = new Map();
     const _dupSeen = new Map<string, number[]>();   // call + result → steps it ran (duplicate-output stubs)
     let _stubStreak = 0, _cycleNudged = false;      // consecutive steps whose every result was stubbed
@@ -2104,13 +2104,14 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 // rather than looping indefinitely (mirrors the step-budget exhaustion path).
                 return await _gracefulSynthesis('repeated tool-call overflow', textContent);
             }
+            _droppedCalls = calls.length - _MAX_CALLS_PER_TURN;
             calls.length = _MAX_CALLS_PER_TURN;
             // The assistant message in the history still lists every call the model made. Only the first ones get results, so
             // the rest would be calls with no result in the next request, which a checking endpoint rejects (HTTP 400 on each
             // retry, codex 419-421). The record keeps what ran.
             _replaceLastAssistantSurface(_s, step, m => ({ ...m, tool_calls: (m.tool_calls ?? []).slice(0, _MAX_CALLS_PER_TURN) }), 'tool-call cap');
         } else {
-            _overflowStreak = 0;
+            _overflowStreak = 0; _droppedCalls = 0;
         }
 
         // Malformed tool-call arguments (deterministic tier): JSON.parse failures
@@ -2394,6 +2395,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             }
         }
         if (_repeatedNames.length)            _emitNudge('tool_repeat', _nudge(`You repeated tool call(s) you already made this turn: ${_repeatedNames.join(', ')}. Here are the cached results — no need to re-execute, move forward.`));
+        if (_droppedCalls) _emitNudge('calls_capped', _nudge(`Only the first ${_MAX_CALLS_PER_TURN} tool calls of your last reply ran; the last ${_droppedCalls} ${_droppedCalls > 1 ? 'were' : 'was'} dropped and has no result. Send ${_droppedCalls > 1 ? 'them' : 'it'} again, in a smaller batch (review of 73d5912).`));
         if (_badArgCalls.length) {
             _emitNudge('bad_args', _nudge(`The arguments of your ${_badArgCalls.join(', ')} tool call(s) were not valid JSON, or arrived damaged (stray <|"|> markers, or code, in the argument names: a string value was closed with a backtick or the wrong marker, so the rest of the call was read as names) — they were executed with missing or EMPTY arguments and their errors reflect that, not the tool itself. Re-emit each call with plain JSON arguments: every value a normal JSON string in double quotes, no <|"|> markers, no backticks around values.`));
             _forceToolCall = true;

@@ -10,6 +10,7 @@ the loop appends after a step (`type: nudge` in the turn log); a **gate** is a c
 | `blocked_untried_fix` | gate | `bench-policy.ts` | benchmark policy: BLOCKED declared before a fix was tried |
 | `broken_syntax` | gate | `completion-gates.ts` | gate: COMPLETED while a file changed this turn (by the agent or a worker) no longer parses; names the error |
 | `broken_tool_call` | nudge | `llm-loops.ts` | a tool call written as text (markup in the message), so nothing ran |
+| `calls_capped` | nudge | `llm-loops.ts` | the reply had more tool calls than one step runs (20); the rest were dropped and the model is told which |
 | `completion_gate` | nudge | `llm-loops.ts` | first COMPLETED after edits: the completion checklist (and, in benchmark runs, the graded-test bounce) |
 | `dup_cycle` | nudge | `llm-loops.ts` | the same sequence of calls repeating in a cycle |
 | `empty_code` | nudge | `llm-loops.ts` | execute_code called with no code argument |

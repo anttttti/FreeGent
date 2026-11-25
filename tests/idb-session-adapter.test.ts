@@ -395,6 +395,21 @@ describe('IDBSessionAdapter — a connection the browser broke', () => {
 });
 
 describe('IDBSessionAdapter — a newer build upgraded the database (G02)', () => {
+    it('an upgrade that aborts leaves the tab working (review of e6d15e1)', async () => {
+        const factory = new IDBFactory();
+        const adapter = await openIDBSession(factory);
+        const db: any = (adapter as any)._db;
+        await new Promise<void>(resolve => {
+            const r = factory.open('fg-session', 99);
+            r.onupgradeneeded = () => r.transaction!.abort();
+            r.onerror = () => resolve(); r.onsuccess = () => resolve();
+        });
+        await new Promise(r => setTimeout(r, 50));
+        expect((window as any).__fgTabOutdated).toBeFalsy();
+        await adapter.replaceMessages('c1', [{ role: 'user', content: 'still works' }]);
+        expect(await adapter.loadHistory('c1')).toEqual([{ role: 'user', content: 'still works' }]);
+        expect((adapter as any)._db).not.toBe(db);
+    });
     it('tells the user to reload instead of reviving a connection at the older version', async () => {
         const factory = new IDBFactory();
         const adapter = await openIDBSession(factory);
@@ -404,7 +419,7 @@ describe('IDBSessionAdapter — a newer build upgraded the database (G02)', () =
             r.onsuccess = () => { r.result.close(); resolve(); };
             r.onerror = () => reject(r.error);
         });
-        expect(document.getElementById('fg-outdated-tab')?.textContent).toMatch(/Reload this tab/);
+        await vi.waitFor(() => expect(document.getElementById('fg-outdated-tab')?.textContent).toMatch(/Reload this tab/));
         expect((adapter as any)._db).toBe(db);   // not replaced by a failing reopen at version 3
     });
 });

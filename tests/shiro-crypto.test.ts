@@ -20,6 +20,9 @@ describe('shell crypto', () => {
         expect(() => c.createHmac('sha512', 'k')).toThrow(/Invalid digest/);
         expect(c.createHash('SHA256').update('abc').digest('hex')).toBe(nodeHash('sha256').update('abc').digest('hex'));
     });
+    it('getHashes lists only what createHash accepts (review of 73d5912)', () => {
+        for (const name of c.getHashes()) expect(() => c.createHash(name), name).not.toThrow();
+    });
     it('hashes the bytes given to update(), not the buffer the caller goes on to reuse', () => {
         const buf = new Uint8Array([1, 2, 3]); const h = c.createHash('sha256'); h.update(buf); buf.fill(9);
         expect(h.digest('hex')).toBe(nodeHash('sha256').update(new Uint8Array([1, 2, 3])).digest('hex'));

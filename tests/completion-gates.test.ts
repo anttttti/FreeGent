@@ -105,6 +105,12 @@ describe('test fixtures left in the system', () => {
     it('a sudoers.d file for no created user is the fix, not a fixture (OS 40)', async () => {
         expect(await runCompletionGates(ctx({ task: "Why can't I use sudo?? fix it.", shellCommands: ['echo "root ALL=(ALL:ALL) ALL" > /etc/sudoers.d/90-root-access'] }))).toBeNull();
     });
+    it('a group is named as a group, and a created user `ops` does not claim the rule of `devops` (review of 808820d)', async () => {
+        const hit = await runCompletionGates(ctx({ task: "Why can't I use sudo?? fix it.", shellCommands: ['groupadd qa_temp', 'useradd ops', 'echo "devops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/10-devops'] }));
+        expect(hit?.text).toMatch(/group qa_temp/);
+        expect(hit?.text).toMatch(/user ops/);
+        expect(hit?.text).not.toMatch(/10-devops/);
+    });
     it('is silent when the task is about users', async () => {
         expect(await runCompletionGates(ctx({ task: 'Create a user alice and let her use sudo.', shellCommands: ['useradd alice'] }))).toBeNull();
     });

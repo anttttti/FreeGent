@@ -514,6 +514,16 @@ describe('event log growth is bounded', () => {
         expect(warn.mock.calls.map(c => String(c[0])).some(m => /was capped/.test(m))).toBe(true);
         warn.mockRestore();
     });
+    it('the cap marker starts on its own line after a torn last write (review of a7f8091)', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const file = path.join(dir, 't.jsonl');
+        await fsp.writeFile(file, JSON.stringify(ev(0, 'y'.repeat(60))) + '\n' + JSON.stringify(ev(1, 'y'.repeat(60))));   // no newline at the end
+        const p = new SessionPersistence(dir, 60_000, { maxFileBytes: 200 });
+        p.enqueue('t', ev(2, 'y'.repeat(200))); await p.flush();   // over the cap: the marker is written
+        const loaded = await new SessionPersistence(dir).load('t');
+        expect(loaded.map(e => e.seq)).toEqual([0, 1]);            // the last complete event is not lost to the glued marker
+        warn.mockRestore();
+    });
     it('prunes files by age, then oldest first down to the size budget', async () => {
         const w = async (n, bytes, ageDays) => {
             const f = path.join(dir, n + '.jsonl'); await fsp.writeFile(f, 'z'.repeat(bytes));
