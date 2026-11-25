@@ -614,9 +614,10 @@ function _resolveRef(ref: string, root: any): any {
     if (ptr === '') return root;
     if (!ptr.startsWith('/')) return undefined;
     // RFC 6901: an empty token is the empty-string key, and a URI fragment is percent-encoded (`#/$defs/Some%20Type`) (codex R431, R432).
-    for (const raw of ptr.slice(1).split('/')) {
-        let part: string;
-        try { part = decodeURIComponent(raw); } catch { return undefined; }
+    // RFC 6901 §6: the fragment is percent-decoded first and the pointer evaluated after, so `%2F` is a separator and only `~1` is a slash inside a name (review of 7bd4d5d).
+    let decoded: string;
+    try { decoded = decodeURIComponent(ptr); } catch { return undefined; }
+    for (const part of decoded.slice(1).split('/')) {
         if (node == null || typeof node !== 'object') return undefined;
         node = node[part.replace(/~1/g, '/').replace(/~0/g, '~')];
     }
@@ -649,6 +650,7 @@ function sanitizeMcpSchema(schema: any, depth = 0, root: any = schema, refStack:
             for (const [k, v] of Object.entries(p)) {
                 if (k === 'properties') merged.properties = { ...(merged.properties ?? {}), ...(v as object) };
                 else if (k === 'required' && Array.isArray(v)) merged.required = [...new Set([...(merged.required ?? []), ...v])];
+                else if (k === 'allOf' && Array.isArray(v)) merged.allOf = [...(merged.allOf ?? []), ...v];   // the nested compositions of every branch, merged in the next pass (review of de28506)
                 else if (!(k in merged)) merged[k] = v;
             }
         }

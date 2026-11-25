@@ -54,6 +54,12 @@ describe('chat history as a Session', () => {
         expect(getChatHistory().map(m => m.content)).toEqual(['hi', 'yo']);
     });
 
+    it('a replayed assistant event whose message is `{}` is not a message (review of de28506)', () => {
+        setChatHistory([{ role: 'user', content: 'hi' }]);
+        chatSession().append('assistant/message', { turn: 0, step: 0, message: {} } as any, { surfaceOp: 'append' } as any);
+        expect(getChatHistory().map(m => m.content)).toEqual(['hi']);
+    });
+
     it('drops null entries and turns system-role nudges into <nudge> user turns', () => {
         setChatHistory([{ role: 'user', content: 'a' }, null, { role: 'system', content: 'be brief' }, undefined]);
         expect(getChatHistory()).toEqual([

@@ -181,6 +181,16 @@ describe('lifecycle gates', () => {
         expect(files['local/fg-tasks/ledger.md']).toMatch(/\| 005 \| done\s+\|/);
     });
 
+    it('the ledger row of a numeric id matches with or without padding, and an id with a period matches literally (review of de28506)', async () => {
+        const ledger = '| ID | Status | Title |\n|----|--------|-------|\n| 007 | todo        | Seven |\n| 115 | todo        | Other |\n';
+        files['fg-tasks/ledger.md'] = ledger; files['fg-tasks/007-x.md'] = '---\nid: 7\ntitle: Seven\nstatus: todo\n---\n';
+        await W._updateLedgerRow('fg-tasks/007-x.md', 'done');
+        expect(files['fg-tasks/ledger.md']).toMatch(/\| 007 \| done\s+\|/);
+        files['fg-tasks/ledger.md'] = ledger; files['fg-tasks/x.md'] = '---\nid: 1.5\ntitle: Dot\nstatus: todo\n---\n';
+        await W._updateLedgerRow('fg-tasks/x.md', 'done');
+        expect(files['fg-tasks/ledger.md']).not.toMatch(/\| 115 \| done/);   // `1.5` did not take row 115
+    });
+
     it('self-review is not generated when no changed file is named (it would invent one)', async () => {
         files['fg-tasks/001-t.md'] = task('- [x] done\n');
         W.callLLMComplete = vi.fn().mockResolvedValue('- changed the LavaExplosionManager');
@@ -191,6 +201,24 @@ describe('lifecycle gates', () => {
         expect(r.transitioned).toBe(true);
         expect(W.callLLMComplete).not.toHaveBeenCalled();
         expect(files['fg-tasks/001-t.md']).not.toContain('Self-Review');
+    });
+
+    it('self-review does not send a named credential file to the model (review of de28506)', async () => {
+        files['config/.env'] = 'API_KEY=sk-live-0123456789'; files['app.js'] = 'x';
+        files['fg-tasks/001-t.md'] = task('- [x] done\n\n## Files\n- `config/.env`\n- `app.js`\n');
+        let prompt = ''; W.callLLMComplete = vi.fn().mockImplementation(async p => { prompt = String(p); return '- ok'; });
+        W.localStorage.setItem('fg_qa_acceptance_review', 'false');
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- self-review\n';
+        await W.transitionTask('fg-tasks/001-t.md', 'in-review');
+        expect(prompt).toContain('app.js');
+        expect(prompt).not.toContain('sk-live-0123456789');
+    });
+
+    it('a bullet under an unrelated heading after a gate list is not a gate (review of de28506)', async () => {
+        files['fg-tasks/001-t.md'] = task('- [x] done\n');
+        files['WORKFLOW.md'] = '## Gates: in-progress -> in-review\n- test-runner\n\n## Notes\n- remember to water the plants\n';
+        const r = await W.transitionTask('fg-tasks/001-t.md', 'in-review');
+        expect(r.reason ?? '').not.toMatch(/gate that does not exist/);
     });
 
     it('R22 failure notes survive the rework-count update', async () => {

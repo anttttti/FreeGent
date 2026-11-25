@@ -43,13 +43,13 @@ export const taskRootOf = (taskPath: string): '' | 'local/' => String(taskPath).
 export const newTaskRoot = (existing: Array<{ path: string }>): '' | 'local/' =>
     existing.length > 0 && existing.every(t => taskRootOf(t.path) === 'local/') ? 'local/' : '';
 // The spellings workspace I/O resolves to one file: `./fg-tasks/x.md`, `fg-tasks/./x.md`, `/workspace/fg-tasks/x.md`, doubled slashes (reviews of 637e3e7, 6cd1c5b).
-const _canonPath = (p: string): string => p.replace(/^\/workspace\//, '').replace(/(^|\/)\.(?=\/)/g, '$1').replace(/\/{2,}/g, '/').replace(/^\//, '');
+const _canonPath = (p: string): string => p.replace(/^\/workspace\//, '').replace(/(^|\/)\.(?=\/)/g, '$1').replace(/\/{2,}/g, '/').replace(/^\//, '').replace(/\/$/, '');
 export function isTaskPath(path: unknown): boolean {
     // `fg-tasks/../AGENTS.md` starts with the task folder and resolves outside it (codex R362).
     return typeof path === 'string' && TASK_DIRS.some(d => _canonPath(path).startsWith(d)) && !/(?:^|[/\\])\.\.(?:[/\\]|$)/.test(path);
 }
 /** The board's index file: a task folder's ledger.md is not a task (codex R365). */
-export const isLedgerPath = (path: unknown): boolean => /(?:^|\/)ledger\.md$/.test(String(path ?? ''));
+export const isLedgerPath = (path: unknown): boolean => /(?:^|\/)ledger\.md$/.test(_canonPath(String(path ?? '')));   // `fg-tasks/ledger.md/` and `fg-tasks/./ledger.md` are the ledger too (review of de28506)
 /** Statuses a task can have, after aliases (review, completed) are mapped; anything else is a typo the board and the runner would read differently (codex R366). */
 export const TASK_STATUSES = ['todo', 'open', 'in-progress', 'in-review', 'done', 'blocked', 'failed'];
 // fg-tasks/current.md is the scratch note a chat starts with (task-setup skill), not a board task: no gates, no duplicate check against it.

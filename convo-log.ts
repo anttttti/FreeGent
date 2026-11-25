@@ -75,7 +75,8 @@ function _persistLogRecord(record: ConvoLogEntry): void {
     if (record.chatId && !(typeof sessionHas === 'function' && sessionHas('loadTurnLog'))) {
         try {
             const key = chatKey.log(record.chatId);
-            const list = JSON.parse(localStorage.getItem(key) || '[]');
+            const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+            const list = Array.isArray(parsed) ? parsed : [];   // a stored value of another shape reads as empty: start the log over instead of losing every later turn (review of de28506)
             list.push(record);
             if (list.length > _LOG_CAP) list.splice(0, list.length - _LOG_CAP);
             localStorage.setItem(key, JSON.stringify(list));

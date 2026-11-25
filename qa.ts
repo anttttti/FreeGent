@@ -58,6 +58,7 @@ function parseWorkflowMd(text) {
         const secM = line.match(/^##\s+Gates:\s*(.+?)\s*$/i);
         if (secM) { section = secM[1].trim().toLowerCase().replace(/\s*(?:→|->|=>|>)\s*/g, '->'); continue; }
         if (/^##\s+Config/i.test(line)) { section = 'config'; continue; }
+        if (/^#{1,6}\s/.test(line)) { section = null; continue; }   // any other heading ends the section: a bullet under `## Notes` is not a gate (review of de28506)
         if (section === 'config') {
             const m = line.match(/^([\w-]+):\s*(.+)$/);
             if (m) config[m[1]] = m[2].trim();
@@ -123,6 +124,8 @@ async function _updateLedgerRow(taskPath, newStatus) {
     try { fm = parseFrontmatter(await agentReadFile(taskPath)); } catch {}
     const id = taskIdOf({ path: taskPath, fm });
     if (!id) return;
+    // As a pattern: a numeric id matches its row with or without zero padding (`7` is row `007`), any other id literally (an imported `1.5` must not match `115`) (review of de28506).
+    const idPat = /^\d+$/.test(String(id)) ? `0*${parseInt(String(id), 10)}` : String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // The ledger of the task's own root: a local/ task and an IndexedDB task can share a number (codex R384).
     const ledgerCandidates = TASK_DIRS.filter(d => d.startsWith('local/') === taskPath.startsWith('local/')).map(d => `${d}ledger.md`);
     for (const ledgerPath of ledgerCandidates) {
@@ -132,12 +135,12 @@ async function _updateLedgerRow(taskPath, newStatus) {
         const archiveSplit = ledger.indexOf('\n## Archive');
         const mainPart    = archiveSplit >= 0 ? ledger.slice(0, archiveSplit) : ledger;
         const archivePart = archiveSplit >= 0 ? ledger.slice(archiveSplit)    : '';
-        const rowRe = new RegExp(`^(\\|\\s*${id}\\s*\\|\\s*)\\S[^|]*(\\|)`, 'm');
+        const rowRe = new RegExp(`^(\\|\\s*${idPat}\\s*\\|\\s*)\\S[^|]*(\\|)`, 'm');
         // A row that already carries this status is done: the status is written once by the lifecycle
         // engine and again by update_task_status, and the second call used to read as "no row".
         const row = rowRe.exec(mainPart);
         if (row) {
-            const current = new RegExp(`^\\|\\s*${id}\\s*\\|\\s*([^|]*?)\\s*\\|`, 'm').exec(mainPart)?.[1];
+            const current = new RegExp(`^\\|\\s*${idPat}\\s*\\|\\s*([^|]*?)\\s*\\|`, 'm').exec(mainPart)?.[1];
             if (current === newStatus) return;
             const updated = mainPart.replace(rowRe, (_, pre, post) => `${pre}${newStatus.padEnd(12)}${post}`);
             if (updated !== mainPart) await agentWriteFile(ledgerPath, updated + archivePart);
@@ -340,6 +343,7 @@ async function gate_self_review(taskPath, content) {
 
     let fileContents: string = '';
     for (const fp of filePaths) {
+        if (isCredentialPath(fp)) continue;   // a credential file named in ## Files is not sent to the model (review of de28506)
         try { fileContents += `\n### ${fp}\n\`\`\`\n${(await agentReadFile(fp)).slice(0, _QA_FILE_MAX)}\n\`\`\`\n`; }
         catch {}
     }

@@ -97,6 +97,18 @@ describe('sanitizeMcpSchema', () => {
         expect(Object.keys(out.properties)).toEqual(['a', 'b']);
         expect(out.required).toEqual(['a', 'b']);
     });
+    it('merges the nested allOf of every branch, not only the first (review of de28506)', () => {
+        const out = W.sanitizeMcpSchema({ allOf: [
+            { allOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] }] },
+            { allOf: [{ type: 'object', properties: { b: { type: 'number' } }, required: ['b'] }] },
+        ] });
+        expect(Object.keys(out.properties)).toEqual(['a', 'b']);
+        expect(out.required).toEqual(['a', 'b']);
+    });
+    it('a $ref fragment is percent-decoded before it is split (review of 7bd4d5d)', () => {
+        const out = W.sanitizeMcpSchema({ type: 'object', properties: { x: { $ref: '#/%24defs%2FType' } }, $defs: { Type: { type: 'string', description: 'T' } } });
+        expect(out.properties.x.type).toBe('string');
+    });
     it('keeps a property named __proto__ as an own key, so required still matches properties (codex R340)', () => {
         const input = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"},"a":{"type":"string"}},"required":["__proto__"]}');
         const out = W.sanitizeMcpSchema(input);

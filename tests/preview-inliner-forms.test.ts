@@ -25,6 +25,14 @@ describe('workspace reference inlining', () => {
         expect(doc).toMatch(/<style media="print">\s*p\{color:blue\}/);
         expect(doc).not.toContain('href="style.css"');
     });
+    it('an alternate stylesheet is left alone, and an unquoted type=module is a module (review of 7bd4d5d)', async () => {
+        files['mod.js'] = 'export const x = 1; window.__mod = x;';
+        const doc = await srcdocOf('<html><head><link rel="alternate stylesheet" href="style.css" title="dark"></head><body><script src=mod.js type=module></script></body></html>');
+        expect(doc).toContain('href="style.css"');                 // not turned into an active <style>
+        expect(doc).not.toContain('body{color:red}');
+        expect(doc).toContain('window.__mod = x;');
+        expect(doc).not.toMatch(/export const x/);                 // exports stripped as for a module
+    });
     it('inlines a script written with an unquoted src', async () => {
         const doc = await srcdocOf('<html><head></head><body><script src=app.js></script></body></html>');
         expect(doc).toContain('window.__ran=1;');

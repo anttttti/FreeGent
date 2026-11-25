@@ -36,7 +36,7 @@ export function eventMessage(ev: SessionEvent): any | null {
         }
         case 'assistant/message': {
             const m = (ev.data as any).message;
-            if (!m || typeof m !== 'object') return null;
+            if (!m || typeof m !== 'object' || typeof m.role !== 'string') return null;   // `{}` is no message: a request without a role is refused (review of de28506)
             // Skip bare usage-only messages (content null, no tool_calls).
             return m.content !== null || m.tool_calls?.length ? m : null;
         }

@@ -646,7 +646,7 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
         /<link\b[^>]*>/gi,
         async (match) => {
             // Any attribute order, and the media query stays on the sheet (a print sheet must not style the screen preview) (codex R467, R468).
-            if (!/\bstylesheet\b/i.test(_attrOf(match, 'rel') ?? '')) return match;
+            if (!/\bstylesheet\b/i.test(_attrOf(match, 'rel') ?? '') || /\balternate\b/i.test(_attrOf(match, 'rel') ?? '')) return match;   // an alternate stylesheet is not applied by default (review of 7bd4d5d)
             const href = _attrOf(match, 'href');
             if (!href || href.startsWith('http') || href.startsWith('//')) return match;
             try {
@@ -688,7 +688,7 @@ async function _inlineWorkspaceRefs(html, pagePath = '', deps?: Set<string>) {
             const src = _attrOf(match, 'src');
             if (!src || src.startsWith('http') || src.startsWith('//')) return match;
             try {
-                const isModule = /\btype=["']module["']/i.test(match);
+                const isModule = /^module$/i.test(_attrOf(match, 'type') ?? '');   // quoted or not, with spaces around `=` (review of 7bd4d5d)
                 const js = isModule
                     ? await _inlineJsModule(ref(src), readFile)
                     : await readFile(ref(src));
