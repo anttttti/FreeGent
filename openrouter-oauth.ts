@@ -10,7 +10,8 @@
 // sessionStorage between leaving and returning, and are removed as soon as the callback is handled.
 // The key is saved like a pasted one (fg_openrouter_key), so the key lock covers it when it is on.
 
-import { keyVaultEnabled, keyVaultUnlocked } from './key-vault.js';
+import { keyVaultEnabled, keyVaultUnlocked, flushKeyVault, keyVaultSaveState } from './key-vault.js';
+import { getPrivacyLevel } from './privacy.js';
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 
@@ -44,10 +45,15 @@ export function openRouterAuthUrl(callbackUrl: string, challenge: string, method
 
 /** Settings → Credentials → Connect: leave for openrouter.ai to approve a key. */
 export async function connectOpenRouter(): Promise<void> {
+    // Refused before the page is left: after the approval the return would be blocked by the privacy guard, or the key could not be kept.
+    if (getPrivacyLevel() === 'local') { alert('Connect OpenRouter is off at the Local privacy level (Settings → Privacy). Paste a key instead, or change the level.'); return; }
+    if (keyVaultEnabled() && !keyVaultUnlocked()) { alert('Unlock your saved keys first (Settings → Credentials), then Connect OpenRouter.'); return; }
     const have = (() => { try { return localStorage.getItem('fg_openrouter_key') || ''; } catch { return ''; } })();
     if (have && !have.startsWith('__fgsk__') &&
         !confirm('Replace your saved OpenRouter key with a new one from OpenRouter? (The old key keeps working until you revoke it at openrouter.ai/keys.)')) return;
     const { verifier, challenge, method } = await pkcePair();
+    // A plain challenge would put the verifier itself in the openrouter.ai address and the browser history: only S256 (HTTPS or localhost) is used.
+    if (method !== 'S256') { alert('Connect OpenRouter needs HTTPS or localhost (this address cannot compute the sign-in challenge safely). Paste a key instead.'); return; }
     const state = _random(16);
     try { sessionStorage.setItem(PENDING, JSON.stringify({ verifier, state, method, at: Date.now() })); }
     catch { alert('Connect OpenRouter needs this tab\'s session storage, which the browser refused. Paste a key instead.'); return; }
@@ -101,6 +107,12 @@ export async function handleOpenRouterCallback(): Promise<boolean | null> {
             return false;
         }
         localStorage.setItem('fg_openrouter_key', j.key);
+        // With the key lock on the save is queued: say so only when it landed.
+        if (keyVaultEnabled()) {
+            await flushKeyVault();
+            const err = keyVaultSaveState().error;
+            if (err) { _status(`OpenRouter connected, but the key could not be saved (${err}): it lasts for this page only. Free some storage and Connect again.`); return false; }
+        }
         _status(keyVaultEnabled() && !keyVaultUnlocked()
             ? 'OpenRouter connected, but your saved keys are locked: the new key lasts for this page only. Unlock the key lock, then Connect again to keep it.'
             : 'OpenRouter connected: a "FreeGent" key was saved. Set a credit limit or revoke it at openrouter.ai/keys.');

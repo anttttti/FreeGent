@@ -36,7 +36,8 @@ class PersistentCooldownMap extends Map<string, number> {
             if ((globalThis as any).window?._fgHeadless) return;
             const saved = JSON.parse(localStorage.getItem(COOLDOWN_STORE_KEY) || '{}');
             const now = Date.now();
-            for (const [k, until] of Object.entries(saved)) if (typeof until === 'number' && until > now) super.set(k, until);
+            // An expiry more than 3 days out is not a cooldown any limit sets (an older parser stored years for a bad reset header): it is dropped.
+            for (const [k, until] of Object.entries(saved)) if (typeof until === 'number' && until > now && until < now + 3 * 86_400_000) super.set(k, until);
         } catch { /* no storage, or unreadable: start empty */ }
     }
     private _save(): void {

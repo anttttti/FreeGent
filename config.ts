@@ -743,6 +743,7 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'vercel|stealth/cat-jam',                    // HTTP 404 "not found" (2026-11-15)
     'openrouter|cohere/north-mini-code:free',    // HTTP 404 "no longer available on OpenRouter: no provider serves this model", not in the provider's list (2026-11-20)
     'kilo|cohere/north-mini-code:free',          // HTTP 404 "model does not exist", not in Kilo's list (2026-11-20)
+    'vercel|inclusionai/ling-3.1-flash-1019',    // priced on Vercel since 2026-11-05: a saved selection or an edited copy would send billable requests to a route chosen as free
     'kilo|stealth/crouton-alpha',                // HTTP 404 "model does not exist"; stealth model withdrawn (2026-11-18)
     'nous|stealth/crouton-alpha',                // HTTP 404 "not found"; stealth model withdrawn (2026-11-18)
     'openrouter|stealth/crouton-alpha',          // no longer listed by OpenRouter; stealth model withdrawn (2026-11-18)

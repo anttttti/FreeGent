@@ -1,3 +1,5 @@
+// A developer's FG_EXPERIMENTS for an A/B run must not change what the suite expects (Sol 6.2 review of 09c20ab): tests that need a flag set it themselves.
+delete process.env.FG_EXPERIMENTS;
 // Vitest setupFile — loads shared window globals before each test file.
 // Plain-JS source files (no imports, no/minimal TS annotations) are eval'd so their
 // function declarations and Object.assign bridges land on window.

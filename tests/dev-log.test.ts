@@ -146,3 +146,11 @@ describe('dev-log', () => {
         expect(JSON.parse(sent).task.title).toMatch(/^tool crash: exec\(python\): k = /);   // the rest is kept
     });
 });
+
+describe('redaction with a malformed saved value (Sol 6.2 review of 47d0657)', () => {
+    it('a credential with an unpaired surrogate does not make redactText throw, and is still removed', async () => {
+        const { redactText } = await import('../secrets.ts');
+        const bad = 'sk-abcdefgh\ud800ijklmnop';
+        expect(redactText(`error ${bad} end`, [bad])).not.toContain('abcdefgh');
+    });
+});

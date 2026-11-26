@@ -128,10 +128,13 @@ export class SessionPersistence {
      */
     async flush(): Promise<void> {
         if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-        if (this.active) await this.active.catch(() => {});
-        // Loop in case enqueue() was called while the drain was running. A failing drain throws
+        // Loop in case enqueue() was called while the drain was running, or a timer drain took the next batch while this waited (it would
+        // be writing it after flush returned: the headless CLI could exit first). A failing drain throws
         // out of the loop: the events are still pending, and looping on a full disk would never end.
-        while (this.pending.size > 0) await this._drain();
+        while (this.active || this.pending.size > 0) {
+            if (this.active) await this.active.catch(() => {});
+            else await this._drain();
+        }
     }
 
     /** Events queued and not yet written (after a failed write: what a retry will write). */

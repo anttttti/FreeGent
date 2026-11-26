@@ -457,7 +457,10 @@ function saveSettings() {
     saveSelect('fg_search_provider', 'search-provider', 'auto');
     saveKey('fg_tavily_key',        'tavily-key');
     saveKey('fg_hf_key',            'hf-key');
+    const _proxyBefore = localStorage.getItem('fg_search_proxy');
     saveKey('fg_search_proxy',      'search-proxy');
+    // Another Worker URL: the keys and guest access the old Worker granted are not this one's.
+    if (localStorage.getItem('fg_search_proxy') !== _proxyBefore) (window as any).loadCfWorkerKeys?.()?.catch?.(() => {});
     saveKey('fg_brave_key',         'brave-key');
     saveKey('fg_github_token',      'github-token');
     saveKey('fg_stackexchange_key', 'stackexchange-key');

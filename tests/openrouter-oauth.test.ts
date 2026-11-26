@@ -2,7 +2,7 @@
 // back with ?code=…&state=…; the code and this tab's verifier are exchanged for a key.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { pkcePair, openRouterAuthUrl, openRouterCallbackUrl, handleOpenRouterCallback } from '../openrouter-oauth.ts';
+import { connectOpenRouter, pkcePair, openRouterAuthUrl, openRouterCallbackUrl, handleOpenRouterCallback } from '../openrouter-oauth.ts';
 
 const W: any = window;
 const realFetch = W.fetch;
@@ -66,5 +66,15 @@ describe('Connect OpenRouter', () => {
         expect(await handleOpenRouterCallback()).toBe(false);
         expect(localStorage.getItem('fg_openrouter_key')).toBeNull();
         expect(statusEl().textContent).toMatch(/refused or expired/);
+    });
+});
+
+describe('Connect refuses before leaving the page (Sol 6.2 review of 6dfb26b)', () => {
+    it('at the Local privacy level it alerts and stores no pending sign-in', async () => {
+        const alerts: string[] = []; const realAlert = W.alert; W.alert = (m: string) => alerts.push(m);
+        localStorage.setItem('fg_privacy_level', 'local');
+        try { await connectOpenRouter(); } finally { W.alert = realAlert; localStorage.removeItem('fg_privacy_level'); }
+        expect(alerts.join()).toMatch(/Local privacy level/);
+        expect(sessionStorage.getItem('fg_openrouter_oauth')).toBeNull();
     });
 });

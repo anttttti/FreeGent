@@ -274,6 +274,7 @@ async function _fetchMoonmathModels(): Promise<FetchResult> {
 const _VERCEL_FREE_IDS = [
     'reflection/beam-free',
     'reflection/beam',
+    'nvidia/nemotron-3.5-lightning-free',   // in the catalog: left off this list, a fallback discovery proposed its removal unprobed (Sol 6.2 review of 9608c36)
     'recursive/flint-v1.0',   // in the catalog: left off this list, the fallback proposed its removal (Codex review of 865c5b8)
 ];
 // Tool-capable but narrow-domain training — opt-in via 'domain-specific' filter chip.

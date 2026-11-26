@@ -353,6 +353,7 @@ function _realHit(re: RegExp, line: string): boolean {
     re.lastIndex = 0;
     for (let m: RegExpExecArray | null; (m = re.exec(line)); ) {
         if (!m[0].length) { re.lastIndex++; return true; }
+        if (!/^[A-Za-z0-9+/=_-]+$/.test(m[0])) return true;   // a match with a character that base64 does not use is not part of a data run
         const end = _dataRunEnd(line, m.index, m[0].length);
         if (end < 0) return true;
         // Every later match that starts in this run is in it too: skip the run, or a one-letter pattern rescans

@@ -26,6 +26,12 @@ describe('endpoint cooldowns survive a reload', () => {
         const b = await load();
         expect(b._isCoolingDown({ provider: 'a', model: 'live' })).toBe(false);
     });
+    it('an implausible far-future expiry saved by an older build is dropped, ordinary ones stay', async () => {
+        localStorage.setItem(KEY, JSON.stringify({ 'a|far': Date.now() + 400 * 86_400_000, 'a|day': Date.now() + 20 * 3_600_000 }));
+        const a = await load();
+        expect(a._isCoolingDown({ provider: 'a', model: 'far' })).toBe(false);
+        expect(a._isCoolingDown({ provider: 'a', model: 'day' })).toBe(true);
+    });
     it('an unreadable store starts empty', async () => {
         localStorage.setItem(KEY, '{not json');
         const a = await load();

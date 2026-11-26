@@ -225,13 +225,14 @@ function _matchNeedle(needle, result) {
     const cmp = n.match(runtime.experiment('empty_compare') ? /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.*)$/ : /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
     if (cmp) {
         const [, field, op] = cmp;
+        const quoted = /^(['"])(.*)\1$/.test(cmp[3].trim());   // a quoted operand is a string: "01" is not 1
         const rawVal = cmp[3].trim().replace(/^(['"])(.*)\1$/, '$2');   // `status=="failed"` and `stdout==""` as written in YAML (antigravity AG-07)
         const actual = result?.[field];
         // Treat absent/null as empty string for == '' comparison (e.g. stdout== guards)
         if ((actual === undefined || actual === null) && op === '==' && rawVal.trim() === '') return true;
         if (actual === undefined || actual === null) return false;
         const numVal = Number(rawVal);
-        const useNum = !isNaN(numVal) && rawVal.trim() !== '';
+        const useNum = !quoted && !isNaN(numVal) && rawVal.trim() !== '';
         const a = useNum ? Number(actual) : String(actual);
         const v = useNum ? numVal : rawVal.trim();
         if (op === '==') return a == v;

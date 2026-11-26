@@ -106,4 +106,12 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
             expect(W.reactiveSkillGuidance(run)).not.toContain('**Same tool repeated**');   // each cause once
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
+
+    it('a quoted operand is compared as a string: status=="01" does not match 1 (Sol 6.2 review of dbca1d1)', () => {
+        W.skillsRegistry.set('quoted-exact', { name: 'quoted-exact', trigger_on_tool: 'execute_code=>status=="01"', body: 'x' });
+        const g = (status: any) => W.reactiveSkillGuidance([{ name: 'execute_code', args: { code: 'true' }, result: { status } }]);
+        expect(g('01')).toContain('quoted-exact');
+        W._reactiveFired.clear();
+        expect(g(1) ?? '').not.toContain('quoted-exact');
+    });
 });

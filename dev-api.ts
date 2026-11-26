@@ -703,7 +703,9 @@ export function gitArgsRefusal(args: string[]): string | null {
     const re = _GIT_SUB_EXEC[sub];
     if (sub === 'bundle' && rest[0] === 'create') return 'git bundle create is not available through run_git';   // writes to a path of its choosing
     const wp = _GIT_SUB_WRITE_PATH[sub];
-    const bad = rest.find(a => (re && re.test(a)) || _GIT_ANY_REFUSED.test(a) || (wp && wp.test(a)) || _gitAbbreviatedRefused(sub, a));
+    // After a bare `--` everything is a pathspec (`git diff -- --textconv` names a file): only the words before it can be options.
+    const _dd = ['diff', 'show', 'log', 'blame', 'grep'].includes(sub) ? rest.indexOf('--') : -1;   // not for commands where a word after it can still be an address (clone, fetch, push)
+    const bad = (_dd < 0 ? rest : rest.slice(0, _dd)).find(a => (re && re.test(a)) || _GIT_ANY_REFUSED.test(a) || (wp && wp.test(a)) || _gitAbbreviatedRefused(sub, a));
     if (bad) return `git ${sub} ${bad.split('=')[0]} is not available through run_git`;
     return null;
 }

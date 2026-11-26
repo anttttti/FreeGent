@@ -33,7 +33,7 @@ export function secretForms(value: unknown): string[] {
     for (const s of [val, val.replace(/^(Bearer|Basic|Token)\s+/i, '')]) {
         if (s.length < MIN_SECRET_LEN) continue;
         out.add(s);
-        out.add(encodeURIComponent(s));
+        try { out.add(encodeURIComponent(s)); } catch { /* an unpaired surrogate has no URL form: the raw value is still redacted */ }
     }
     return [...out];
 }

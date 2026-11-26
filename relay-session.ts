@@ -32,15 +32,18 @@ export function relayOrigin(input: any, init?: any): string | null {
 function _loadTurnstile(): Promise<any> {
     const w = window as any;
     if (w.turnstile) return Promise.resolve(w.turnstile);
-    _script ??= new Promise((resolve, reject) => {
+    if (_script) return _script;
+    // Each load clears only its own cache entry: a late error of a timed-out script must not drop the retry's.
+    const mine: Promise<any> = new Promise((resolve, reject) => {
         const s = document.createElement('script');
         s.src = TURNSTILE_JS;
         s.async = true;
         s.onload = () => w.turnstile ? resolve(w.turnstile) : reject(new Error('Turnstile did not start'));
-        s.onerror = () => { _script = null; reject(new Error('challenges.cloudflare.com could not be loaded')); };
+        s.onerror = () => { if (_script === mine) _script = null; reject(new Error('challenges.cloudflare.com could not be loaded')); };
         document.head.appendChild(s);
     });
-    return _script;
+    _script = mine;
+    return mine;
 }
 
 /** `p`, or a rejection with the signal's reason as soon as it aborts (no signal: `p`). */

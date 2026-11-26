@@ -161,6 +161,13 @@ describe('gitArgsRefusal', () => {
             expect(gitArgsRefusal(a), JSON.stringify(a)).not.toBeNull();
     });
 
+    it('a pathspec after -- is not an option (git diff -- --textconv), and the option before it is still refused', () => {
+        expect(gitArgsRefusal(['diff', '--', '--textconv'])).toBeNull();
+        expect(gitArgsRefusal(['log', '--', '--output=x'])).toBeNull();
+        expect(gitArgsRefusal(['diff', '--textconv', '--', 'a'])).not.toBeNull();
+        expect(gitArgsRefusal(['clone', '--', '--upload-pack=sh', 'r'])).not.toBeNull();
+    });
+
     it('refuses reading or operating outside the project repository', () => {
         for (const a of [['diff', '--no-index', '/dev/null', '/home/u/.config/freegent/credentials'],
                          ['grep', '--no-index', 'KEY', '/home/u'], ['-C', '/home/u/.ssh', 'status'],
