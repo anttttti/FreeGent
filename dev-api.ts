@@ -153,8 +153,8 @@ export function substituteServerKeys(
     keys: Record<string, string>,
 ): { url: string; headers: Record<string, string>; body: string | undefined; used: boolean } {
     let used = false;
-    let host = '', protocol = '';
-    try { ({ hostname: host, protocol } = new URL(url)); } catch { /* checked below if needed */ }
+    let host = '', protocol = '', origin = '';
+    try { ({ hostname: host, protocol, origin } = new URL(url)); } catch { /* checked below if needed */ }
     const sub = (s: string): string => s.replace(_PLACEHOLDER_RE, (_m, fgKey: string) => {
         const val = keys[fgKey];
         if (!val) throw new ProxyRefusal(`no server key for ${fgKey}`);
@@ -166,7 +166,7 @@ export function substituteServerKeys(
     // The URL is checked on its own first: its host decides where every other value may go.
     const outUrl = sub(url);
     // A key with a URL delimiter ('@', '/') in its bytes could move the host once substituted: the request goes where the checked URL said (night exploration D040).
-    if (used && outUrl !== url) { let o: URL | null = null; try { o = new URL(outUrl); } catch {} if (!o || o.hostname !== host || o.protocol !== protocol) throw new ProxyRefusal(`the substituted URL no longer points at ${host}`); }
+    if (used && outUrl !== url) { let o: URL | null = null; try { o = new URL(outUrl); } catch {} if (!o || o.origin !== origin) throw new ProxyRefusal(`the substituted URL no longer points at ${host}`); }
     const outHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers)) outHeaders[k] = typeof v === 'string' ? sub(v) : v;
     const outBody = typeof body === 'string' ? sub(body) : body;
@@ -687,6 +687,7 @@ export function hardenGitArgs(args: string[]): string[] {
     const { sub, index } = gitSubcommand(args);
     const out = ['-c', 'core.fsmonitor=false', ...args];
     if (sub === 'diff' || sub === 'show' || sub === 'log') out.splice(2 + index + 1, 0, '--no-ext-diff', '--no-textconv');
+    else if (sub === 'blame') out.splice(2 + index + 1, 0, '--no-textconv');   // blame runs a repo-configured textconv by default; grep only with --textconv, which gitArgsRefusal refuses (night exploration D047, D048, D050)
     return out;
 }
 
@@ -862,6 +863,7 @@ export function createDevApi(opts: DevApiOptions) {
             const walk = async (dir: string): Promise<void> => {
                 for (const entry of await readdir(dir, { withFileTypes: true })) {
                     const abs = join(dir, entry.name);
+                    if (entry.name.toLowerCase() === '.git') continue;   // the workspace refuses every write inside .git (_refuseGitMetadata): a `git init` or clone would come back as one "[write failed]" per file
                     if (entry.isDirectory()) { await walk(abs); continue; }
                     seen.add(relative(tmpDir!, abs).split(sep).join('/'));   // a path as the workspace spells it, on Windows too (review of d385ad1)
                     // Skip symlinks: agent code inside the sandbox can create a dangling symlink

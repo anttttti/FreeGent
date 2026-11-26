@@ -31,6 +31,7 @@ describe('substituteServerKeys', () => {
     it('refuses a key whose bytes would move the host of the URL once substituted', () => {
         const keys = { fg_gemini_key: '@evil.example/' };
         expect(() => substituteServerKeys('https://__fgsk__fg_gemini_key__:x@generativelanguage.googleapis.com/v1', {}, undefined, keys)).toThrow(ProxyRefusal);
+        expect(() => substituteServerKeys('https://__fgsk__fg_gemini_key__@generativelanguage.googleapis.com/v1', {}, undefined, { fg_gemini_key: 'k:8443/@' })).toThrow(ProxyRefusal);
     });
     it('fills a placeholder for the key\'s own host', () => {
         const r = substituteServerKeys('https://generativelanguage.googleapis.com/v1beta/models?key=__fgsk__fg_gemini_key__',
@@ -328,6 +329,11 @@ describe('dev API over HTTP', () => {
             expect(out.files_written['text.txt']).toBeUndefined();
             expect(Buffer.from(out.files_written['made.bin'].slice(5), 'base64')).toEqual(Buffer.from([0xff, 0x80]));
             expect(out.files_written['made.bin'].startsWith(BIN)).toBe(true);
+        });
+
+        it('a .git directory made by the command is not sent back (the workspace refuses writes inside it)', async () => {
+            const out = await run('mkdir -p .git/objects && echo ref > .git/HEAD && echo hi > kept.txt');
+            expect(Object.keys(out.files_written)).toEqual(['kept.txt']);
         });
 
         it('a non-UTF-8 byte after the first 8 KB is not lossy-decoded either', async () => {
@@ -630,6 +636,7 @@ describe('hermes C5 and opencode §3.2: the read-only git gate', () => {
         expect(hardenGitArgs(['diff', 'HEAD'])).toEqual(['-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
         expect(hardenGitArgs(['--no-pager', 'log', '-1'])).toEqual(['-c', 'core.fsmonitor=false', '--no-pager', 'log', '--no-ext-diff', '--no-textconv', '-1']);
         expect(hardenGitArgs(['status'])).toEqual(['-c', 'core.fsmonitor=false', 'status']);
+        expect(hardenGitArgs(['blame', 'f.bin'])).toEqual(['-c', 'core.fsmonitor=false', 'blame', '--no-textconv', 'f.bin']);
     });
 });
 
