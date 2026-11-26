@@ -28,6 +28,10 @@ describe('substituteServerKeys', () => {
         for (const url of ['https://evil.router.requesty.ai/v1', 'http://router.requesty.ai/v1'])
             expect(() => substituteServerKeys(url, headers, '{}', keys)).toThrow(ProxyRefusal);
     });
+    it('refuses a key whose bytes would move the host of the URL once substituted', () => {
+        const keys = { fg_gemini_key: '@evil.example/' };
+        expect(() => substituteServerKeys('https://__fgsk__fg_gemini_key__:x@generativelanguage.googleapis.com/v1', {}, undefined, keys)).toThrow(ProxyRefusal);
+    });
     it('fills a placeholder for the key\'s own host', () => {
         const r = substituteServerKeys('https://generativelanguage.googleapis.com/v1beta/models?key=__fgsk__fg_gemini_key__',
             {}, undefined, KEYS);

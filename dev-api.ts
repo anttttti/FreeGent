@@ -165,6 +165,8 @@ export function substituteServerKeys(
     });
     // The URL is checked on its own first: its host decides where every other value may go.
     const outUrl = sub(url);
+    // A key with a URL delimiter ('@', '/') in its bytes could move the host once substituted: the request goes where the checked URL said (night exploration D040).
+    if (used && outUrl !== url) { let o: URL | null = null; try { o = new URL(outUrl); } catch {} if (!o || o.hostname !== host || o.protocol !== protocol) throw new ProxyRefusal(`the substituted URL no longer points at ${host}`); }
     const outHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers)) outHeaders[k] = typeof v === 'string' ? sub(v) : v;
     const outBody = typeof body === 'string' ? sub(body) : body;
