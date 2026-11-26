@@ -7,6 +7,12 @@ type: skill
 
 When invoked as `/review [target]`, or when asked to review changes, you are the reviewer, not the author. You read; you do not edit files, commit, stash, reset or push, and you do not fix anything unless the person asks after the review.
 
+You change nothing in the project: the files you create or edit are part of what the person reviews, so a review that leaves files behind has made things worse.
+
+Budget your steps: a run has about 100 tool calls in all. Spend at most 60 on investigating (reading diffs, searching callers, reading functions); with 10 steps left, stop and write the report from what you have, saying under NOT CHECKED which files you did not get to. A partial review that is delivered is worth more than a complete one that is not. Never write a scratch test or script to try something out, and never install anything.
+
+Do the review yourself, in this conversation: do not hand it to workers or sub-agents, whose findings you would have to relay and could lose. For a large change, work through the files in order of importance and stop investigating when the remaining files are lock files, generated output or pure moves; say what you skipped.
+
 ## 1. Pick the target
 
 Read the target from the message (nothing after `/review` means the working tree):
@@ -24,7 +30,7 @@ If it is ambiguous (several candidates, a name that is both a branch and a path)
 
 ## 2. Collect the change
 
-Use `run_git` if you have it, otherwise `git` through `execute_code`. All of it read-only:
+Use `run_git` if you have it, otherwise `git` through `execute_code`. All of it read-only, and nothing is ever written: no scratch file, no saved diff (`git diff > x.diff`), no temporary test or config file, not even outside the project. Read git's output directly; for a big diff, read it file by file.
 
 - `git status --porcelain=v1 -b`, then `git diff --stat <target>` to see the size. Add `--no-ext-diff --no-textconv` and `--find-renames` to the diffs you read.
 - Working tree: `git diff HEAD` (or `git diff` plus `git diff --cached` when there is no commit yet). Untracked files: list them with `git ls-files --others --exclude-standard` and read each with `read_file`; they are new code, review all of it.
@@ -40,7 +46,7 @@ A diff shows what changed, not what it breaks. Before you write a finding:
 1. List what the change adds, changes, moves, renames or removes: functions, constants, exports, messages, options, file names, config keys.
 2. For each one, search the repository for its name (`search_workspace`, and file names with `list_files`) and read the hits that are callers, tests, docs, scripts or config. A renamed file, a changed message or signature, a removed export, a changed default is where another file breaks.
 3. Read each changed function in full with `read_file` as it is now, not only the hunk. Read the test that covers it, if any, and check that it can fail.
-4. If the project has a quick test or type-check command for the files involved, you may run it when `execute_code` is available and it is cheap; otherwise say it was not run. Never install dependencies or change files to make it run.
+4. If the project has a quick test or type-check command for the files involved, you may run one targeted test file or one type-check when `execute_code` is available and it is cheap, once: if it does not run (missing tools, wrong Node version), say it was not run and go on; never retry across other versions, install dependencies, or change files to make it run.
 
 ## 4. Judge
 
@@ -67,5 +73,9 @@ NOT CHECKED: what you could not verify (tests not run, behaviour that needs a br
 ```
 
 Order the issues by priority, then by importance. Use `file:line` of the current file (the working tree or the reviewed revision). Quote no more than a line of code. Keep each issue to what the author needs to act on. If the run asks for a completion marker, end with a last line of only `COMPLETED`.
+
+A completion checklist that asks you to run the test suite does not apply: you changed no files, so there is nothing to verify; answer it with the completion marker alone, or, if you add anything, with the complete report again followed by the marker.
+
+Your last message must be the complete report in the form above: the person reads only that message. Do not end with a remark about the report, a summary of what you did, or text that refers to an earlier message; if anything has to follow the report, it is the completion marker alone.
 
 Afterwards, if there are issues, offer once to fix them; do not start fixing.

@@ -6,7 +6,7 @@ A skill is a short Markdown instruction that FreeGent adds to the prompt only wh
 
 - Skills such as `debug`, `test`, `search`, `deep-research`, `failure-recovery`, `pdf`, `sql`, `image`, `audio`, `datetime` and `location`.
 - Rules for git, HTTP, JavaScript, documents, AST queries, file persistence and data fallbacks.
-- In the repository's `skills/` folder: `commit`, `plan`, `research`, `tasks` and `verify-with-tests`.
+- In the repository's `skills/` folder: `commit`, `plan`, `research`, `review`, `tasks` and `verify-with-tests`. `/review [target]` reviews uncommitted changes (the default), `staged`, a commit, a range such as `HEAD~3..HEAD`, or a branch against its base, read-only, and reports defects by priority with file and line. Headless runs have no slash commands: ask in words ("Review my uncommitted changes") and add `--write-allow none/` to keep the run from writing anything.
 
 Switch them on and off in **Settings → Skills**, where you can also edit the triggers of each.
 
