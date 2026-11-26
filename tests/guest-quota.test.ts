@@ -48,6 +48,26 @@ describe('guest quota offer', () => {
         expect(document.getElementById('fg-guest-quota-dialog')).toBeNull();
     });
 
+    it('closing the offer while the lookup runs withdraws the send', async () => {
+        state.guest = true;
+        const retry = vi.fn();
+        offerGuestQuota(retry);
+        click('guest');
+        document.getElementById('fg-guest-quota-dialog')!.remove();   // closed during the /keys lookup
+        await flush();
+        expect(retry).not.toHaveBeenCalled();
+    });
+
+    it('with the quota on but no model of the list covered by it, says so and does not send (no reopening loop)', async () => {
+        state.guest = true;
+        const retry = vi.fn();
+        offerGuestQuota(retry, () => false);
+        click('guest'); await flush();
+        expect(retry).not.toHaveBeenCalled();
+        expect(document.getElementById('fg-guest-quota-dialog')).not.toBeNull();
+        expect(statusText()).toMatch(/none of the models in your priority list/);
+    });
+
     it('when the quota is off, says so, restores the privacy level and does not send', async () => {
         const retry = vi.fn();
         offerGuestQuota(retry);
@@ -69,7 +89,7 @@ describe('guest quota offer', () => {
     it('"Add my own key" opens Settings and contacts no Worker', () => {
         offerGuestQuota(vi.fn());
         click('key');
-        expect((window as any).showSettings).toHaveBeenCalled();
+        expect((window as any).showSettings).toHaveBeenCalledWith('credentials');
         expect((window as any).onPrivacyLevelChange).not.toHaveBeenCalled();
     });
 });

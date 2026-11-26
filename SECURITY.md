@@ -45,7 +45,7 @@ FreeGent has four parts, and they have different exposure:
   Startup checks `/keys` there for guest availability without requiring a Developer key. Saved
   Provider-only and Local choices still prevent hosted Worker requests. It forwards model calls only
   to a fixed list of provider hosts and stores nothing, except a chat log a user chooses to send
-  (kept 14 days). Optional provider keys stored as Worker secrets (Worker keys) never leave the
+  (kept 14 days) and, with the guest quota on, a per-network request count for the current UTC day (a Durable Object keyed by the visitor's IPv4 address or IPv6 /64, with no expiry). Optional provider keys stored as Worker secrets (Worker keys) never leave the
   Worker; all of them are injected only into requests that carry the Developer key (`X-FG-Dev-Key`): the comparison is constant-time and every
   attempt spends from a per-IP rate limit (`FG_RATE_LIMITER` in `wrangler.toml`), so the key cannot
   be guessed online. Other clients never receive a key. While the `FG_GUEST_QUOTA` secret is `1`,

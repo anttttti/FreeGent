@@ -1,6 +1,6 @@
 ---
 name: javascript
-description: Run JavaScript/Node.js code via execute_code. Available in all environments. CLI/local: full Node.js with real filesystem and npm. Browser: virtual fs with fs.readFileSync/writeFileSync, no npm.
+description: "Run JavaScript/Node.js code via execute_code. Available in all environments. CLI/local: full Node.js with real filesystem and npm. Browser: virtual fs with fs.readFileSync/writeFileSync, no npm."
 trigger: javascript, node, nodejs, node.js, js snippet, run js, console.log, require(, npm test, npm run, jest, mocha
 trigger_on_filetype: .js, .mjs, .cjs, .jsx
 requires_tools: execute_code

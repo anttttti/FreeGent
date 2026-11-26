@@ -140,6 +140,16 @@ describe('checkpoint restore of the local folder', () => {
         const { localFiles } = await W.restoreCheckpointWorkspace('chat-bin', '1000');
         expect(localFiles).toContainEqual({ name: 'img.png', content: Buffer.from(png).toString('base64'), encoding: 'base64' });
     });
+    it('bytes that only decode as windows-1252 come back as the same bytes, not as re-encoded UTF-8', async () => {
+        const dir = await connect();
+        const raw = new Uint8Array([0x80, 0x81, 0x41]);   // not UTF-8, no NUL: decoded as text it would be written back as other bytes
+        dir.disk.set('data.bin', raw);
+        await W.saveCheckpointSnapshot('chat-1252', '1000');
+        dir.disk.set('data.bin', new TextEncoder().encode('changed'));
+        await W.saveCheckpointSnapshot('chat-1252', '2000');
+        const { localFiles } = await W.restoreCheckpointWorkspace('chat-1252', '1000');
+        expect(localFiles).toContainEqual({ name: 'data.bin', content: Buffer.from(raw).toString('base64'), encoding: 'base64' });
+    });
     it('a file made in the folder after the snapshot is returned as a delete', async () => {
         const dir = await connect({ 'keep.txt': 'K' });
         await W.saveCheckpointSnapshot('chat-del', '1000');

@@ -568,6 +568,10 @@ describe('secret redaction', () => {
         expect(W.redactMcpSecrets('url?key=AIza%2Bkey%2Fvalue%3D and AIza+key/value=', h)).toBe('url?key=[redacted] and [redacted]');
         expect(W.redactMcpSecrets('abc stays', h)).toBe('abc stays');
     });
+    it('a saved Content-Type or Accept header is not a credential', () => {
+        const h = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'X-Api-Key': 'tok_123456789' };
+        expect(W.redactMcpSecrets('application/json tok_123456789', h)).toBe('application/json [redacted]');
+    });
 
     it('keeps the key out of tool results, tool errors and transport errors', async () => {
         const KEY = 'AIzaSECRETKEY12345';

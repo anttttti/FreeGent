@@ -632,8 +632,9 @@ export function resolveWorkerModelSpec(workerModelSpec: string | null, role: any
     // Consult the global Worker Model setting (a selected model without a key gives way to the next usable one).
     const setting = typeof getEffectiveWorkerModel === 'function' ? getEffectiveWorkerModel() : '';
     if (setting === 'priority') {
-        // Always use the #1 model in the priority list, regardless of cooldown.
-        return getMainModelList()[0] || null;
+        // Always use the #1 model that can be called, regardless of cooldown: a model with no key, switched off, or ruled out by Settings → Privacy
+        // or by the guest-access choice is not in the active list (an unfiltered #1 sent delegated prompts to the guest quota after opt-out).
+        return getActiveMainModelList()[0] || null;
     }
     if (setting && setting !== '' && !isBlacklistedModel(setting)) {
         // A specific provider|model was selected (one the provider has since withdrawn is no selection: the default below applies).

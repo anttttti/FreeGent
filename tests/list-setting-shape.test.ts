@@ -128,3 +128,20 @@ describe('codex R199/R200: malformed saved profile data', () => {
         localStorage.clear();
     });
 });
+
+describe('Sol 6.2 review of 5eadd6c: a locked key vault', () => {
+    it('a profile that moves the endpoint is not applied while the lock is closed (the old key cannot be removed)', async () => {
+        vi.resetModules();
+        const alertFn = vi.fn(); vi.stubGlobal('alert', alertFn);
+        vi.doMock('../key-vault.ts', () => ({ keyVaultEnabled: () => true, keyVaultUnlocked: () => false }));
+        try {
+            await import('../profiles.ts');
+            localStorage.clear();
+            localStorage.setItem('fg_openai_url', 'https://api.example.com/v1');
+            W.profileApply({ fg_openai_url: 'https://other.example.org/v1', fg_temperature: '0.3' });
+            expect(localStorage.getItem('fg_openai_url')).toBe('https://api.example.com/v1');
+            expect(localStorage.getItem('fg_temperature')).toBeNull();
+            expect(alertFn).toHaveBeenCalledWith(expect.stringContaining('key lock is closed'));
+        } finally { vi.doUnmock('../key-vault.ts'); localStorage.clear(); }
+    });
+});

@@ -369,12 +369,19 @@ async function _restoreLocalFiles(res: { localFiles: Array<{ name: string; conte
     const deletes = files.filter(f => f.content === null).length;
     if (!(await _confirmLocalRestore(files.length - deletes, deletes, res.localFolder ?? null))) return;
     // Parallel writes: don't let one stalled FSA handle block the rest.
+    // A file the folder would not take (it has become a directory, permission) is reported, not counted as restored (Sol 6.2 review of fbc2c53).
+    const failed: string[] = [];
     await Promise.all(files.map(async f => {
         try {
-            if (f.content === null) { try { await deleteFsaFile(f.name); } catch {} }
+            if (f.content === null) await deleteFsaFile(f.name);
             else await writeFsaFile(f.name, f.content, f.encoding ?? null);
-        } catch {}
+        } catch (e: any) {
+            // A delete of a file that is already gone is the state the restore wanted.
+            if (f.content === null && /not[ _-]?found|could not be found|no such/i.test(String(e?.name ?? '') + ' ' + String(e?.message ?? ''))) return;
+            failed.push(f.name);
+        }
     }));
+    if (failed.length) notify(`${failed.length} file${failed.length === 1 ? '' : 's'} in the local folder could not be restored: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? ', …' : ''}.`);
 }
 
 function _confirmLocalRestore(writes: number, deletes = 0, folder: string | null = null): Promise<boolean> {
@@ -1460,7 +1467,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _activeSpec = getActiveMainModelList()[0];
     const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
     if (!specHasKey(_keySpec)) {
-        if (canOfferGuestQuota()) offerGuestQuota(() => { void agentSend(container); }); else showSettings('credentials');
+        if (canOfferGuestQuota()) { const _offerChat = activeChatId; offerGuestQuota(() => { if (activeChatId === _offerChat) void agentSend(container); }, () => specHasKey(_keySpec)); } else showSettings('credentials');
         return;
     }
 

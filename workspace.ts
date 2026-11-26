@@ -758,7 +758,13 @@ async function _readFsaRecord(name: string): Promise<{ content: string; encoding
     const { dir, filename } = await fsaNavigate(name);
     const bytes = new Uint8Array(await (await (await dir.getFileHandle(filename)).getFile()).arrayBuffer());
     const text = decodeTextBytes(bytes);
-    return text !== null ? { content: text, encoding: null } : { content: _uint8ToBase64(bytes), encoding: 'base64' };
+    // Text only when the bytes come back exactly from its UTF-8 encoding: a Latin-1 or UTF-16 file, or bytes such as 80 81 that merely decode as windows-1252, would be
+    // written back as different UTF-8 bytes by a restore (Sol 6.2 review of fbc2c53).
+    if (text !== null) {
+        const back = new TextEncoder().encode(text);
+        if (back.length === bytes.length && back.every((v, i) => v === bytes[i])) return { content: text, encoding: null };
+    }
+    return { content: _uint8ToBase64(bytes), encoding: 'base64' };
 }
 
 async function readFsaFile(name, asBase64 = false) {

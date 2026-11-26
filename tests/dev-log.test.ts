@@ -17,6 +17,16 @@ describe('dev-log', () => {
         expect(f).not.toHaveBeenCalled();
     });
 
+    it('with a self-hosted Worker configured, the Developer key and the logs never go to FreeGent\'s Worker', async () => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        localStorage.setItem('fg_search_proxy', 'https://proxy.example.org');
+        devLogEntry('error', 'console', 'boom');
+        expect(_devLogQueueForTest()).toHaveLength(0);
+        await flushDevLog();
+        await sendTaskLog({ id: '1', title: 't', path: 'p' }, 'done', '', 'c1', async () => '{}');
+        expect(f).not.toHaveBeenCalled();
+    });
+
     it('batches entries with the session id and the key, and counts repeats', async () => {
         localStorage.setItem('fg_dev_key', 'k1');
         devLogEntry('warn', 'console', 'same'); devLogEntry('warn', 'console', 'same'); devLogEntry('error', 'console', 'other');

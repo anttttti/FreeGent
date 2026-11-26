@@ -27,6 +27,10 @@ Because any program can call the Worker, its page-fetch path first asks for a [C
 
 The Worker can also hold provider keys of its own (Worker keys). They never leave it: the Worker makes requests with them. They serve two cases, both explained in [Access without your own key](access.md): **guest access**, a limited quota on Groq, Kilo, OpenRouter and TokenHarbor for visitors without a key, while FreeGent has it switched on; and the **Developer key**, which gives the Worker's operator all of them.
 
+## Guest quota {#guest-quota}
+
+This section moved: see [Guest access](access.md#guest-access).
+
 ## When you do need your own proxy or Worker
 
 - **You host FreeGent yourself on a static site.** The hosted Worker only accepts its own origins. A fork on `yourname.github.io` or `*.pages.dev` is treated as a static host and sent to `proxy.freegent.ai`, which answers `403 Origin not allowed`. On any other domain the page assumes a local server and calls `/api/proxy` on its own host, which a static site does not have. Either way, deploy [the Worker](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md) to your Cloudflare account, add your origin to `ALLOWED_ORIGINS`, and paste its URL into **Settings → Privacy → CORS Proxy / CF Worker URL**. See [Local or self-hosted](../local/webui.md#hosting-your-own-site-and-worker).

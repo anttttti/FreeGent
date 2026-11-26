@@ -70,10 +70,22 @@ describe('a media override the privacy level rules out is not chosen', () => {
         expect(cloud).toBeTruthy();
         const spec = `${cloud.provider}|${cloud.model}`;
         localStorage.setItem('fg_image_model', spec);
+        localStorage.setItem('fg_openrouter_key', 'own-key');   // an override with no key is skipped too
         localStorage.setItem('fg_privacy_level', 'routed');
         expect(getMediaCapableSpec(['image'])).toBe(spec);
         localStorage.setItem('fg_privacy_level', 'local');
         expect(getMediaCapableSpec(['image'])).not.toBe(spec);
-        localStorage.removeItem('fg_image_model'); localStorage.removeItem('fg_privacy_level');
+        localStorage.removeItem('fg_image_model'); localStorage.removeItem('fg_privacy_level'); localStorage.removeItem('fg_openrouter_key');
+    });
+    it('an override with no key gives way to a keyed model that covers the media', () => {
+        const getMediaCapableSpec = (window as any).getMediaCapableSpec;
+        const cloud = (window as any).getAllModels().find((m: any) => m.provider === 'openrouter' && (m.media || []).includes('image'));
+        localStorage.setItem('fg_image_model', `${cloud.provider}|${cloud.model}`);   // no OpenRouter key
+        localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'nous', model: 'own-img', label: 'own', media: ['text', 'image'] }]));
+        localStorage.setItem('fg_main_models', JSON.stringify(['nous|own-img']));
+        localStorage.setItem('fg_nous_key', 'own-key');
+        localStorage.setItem('fg_privacy_level', 'routed');
+        expect(getMediaCapableSpec(['image'])).toBe('nous|own-img');
+        for (const k of ['fg_image_model', 'fg_custom_models', 'fg_main_models', 'fg_nous_key', 'fg_privacy_level']) localStorage.removeItem(k);
     });
 });

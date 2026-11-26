@@ -28,6 +28,10 @@ describe('freegent command routing', () => {
         // The UI's message-at-start becomes the request (codex R312).
         expect(route(['--model', 'm', '--prompt', 'hi there'], { stdinTTY: false, stdoutTTY: true })).toEqual({ program: 'cli', args: ['-p', 'hi there', '--model', 'm'] });
     });
+    it('--prompt with no message is an error, not a request made of the next option', () => {
+        for (const a of [['--prompt', '--model', 'm'], ['--model', 'm', '--prompt']])
+            expect(route(a, { stdinTTY: false, stdoutTTY: true })).toEqual({ program: 'error', message: 'freegent: --prompt needs a message' });
+    });
     it('--help and --version are answered by the launcher', () => {
         expect(route(['--help'], tty).program).toBe('help');
         expect(route(['-v'], tty).program).toBe('version');

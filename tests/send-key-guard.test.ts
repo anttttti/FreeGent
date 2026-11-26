@@ -18,7 +18,7 @@ afterEach(() => { localStorage.removeItem('fg_main_models'); localStorage.remove
 async function sendOpensSettings(): Promise<boolean> {
     const orig = W.showSettings;
     let opened = false;
-    W.showSettings = () => { opened = true; };
+    W.showSettings = (tab?: string) => { opened = tab === 'credentials'; };   // the guard sends people to the Credentials tab
     try { await W.agentSend(); } finally { W.showSettings = orig; }  // no #agent-input → returns after the guard
     return opened;
 }

@@ -10,6 +10,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const r = route(process.argv.slice(2), { stdinTTY: !!process.stdin.isTTY, stdoutTTY: !!process.stdout.isTTY });
 
 if (r.program === 'help') { console.log(HELP); process.exit(0); }
+if (r.program === 'error') { console.error(r.message); process.exit(2); }
 if (r.program === 'version') { console.log(fgVersion()); process.exit(0); }
 
 const entry = join(root, r.program === 'tui' ? 'fg-tui.tsx' : 'fg-run.ts');

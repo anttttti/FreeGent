@@ -9,6 +9,7 @@ import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 import { getPrivacyLevel } from './privacy.js';
 import { getMcpServers } from './mcp.js';
+import { keyVaultEnabled, keyVaultUnlocked } from './key-vault.js';
 import { getChatHistory, setChatHistory } from './chat-history.js';
 
 // ── In-memory session log ─────────────────────────────────────────────────
@@ -311,8 +312,13 @@ export function storedSecretValues(): string[] {
     } catch {}
     return vals;
 }
+/** With the key lock on and the vault closed the saved values are not known, so a key that appears in the chat can only be caught by its format: nothing is built or sent then. */
+export function assertCredentialsReadable(): void {
+    if (keyVaultEnabled() && !keyVaultUnlocked()) throw new Error('The key lock is closed, so saved keys cannot be removed from the log reliably. Unlock it in Settings → Credentials first.');
+}
 /** The chat's payload as JSON with stored credentials removed (what sendChatLog posts). */
 export async function buildRedactedChatJson(id: string): Promise<string> {
+    assertCredentialsReadable();
     return redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());
 }
 async function sendChatLog(id) {
@@ -321,6 +327,7 @@ async function sendChatLog(id) {
     if (getPrivacyLevel() !== 'routed') { alert('Sending logs is off at the Provider-only and Local privacy levels (Settings → Privacy). Download the chat instead.'); return; }
     if (!confirm('Send this chat (messages, tool calls and results) to the FreeGent developer for debugging? API keys are removed first. It is kept for 14 days.')) return;
     try {
+        assertCredentialsReadable();
         const body = redactSecrets(JSON.stringify(await _buildChatPayload(id)), storedSecretValues());
         const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body });
         const j = await r.json().catch(() => ({}));

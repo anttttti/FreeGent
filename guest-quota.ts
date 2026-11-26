@@ -34,7 +34,8 @@ const _utcMidnight = () => { const d = new Date(); d.setUTCHours(24, 0, 0, 0); r
 const _pausedText = () => `This network has used today's guest quota. Add your own key, or come back after 00:00 UTC (${new Date(_utcMidnight()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} your time).`;
 
 /** Shows the choice. `retry` re-runs the send once the guest quota is in use. */
-export function offerGuestQuota(retry: () => void): void {
+/** `usable` says whether the send would now find a model it can call: with none (a list of models the guest quota does not cover) the dialog stays and says so instead of reopening after the retry. */
+export function offerGuestQuota(retry: () => void, usable?: () => boolean): void {
     document.getElementById(DIALOG_ID)?.remove();
     const overlay = document.createElement('div');
     overlay.id = DIALOG_ID;
@@ -73,6 +74,13 @@ export function offerGuestQuota(retry: () => void): void {
         const setLevel = (level: string) => (window as any).onPrivacyLevelChange?.(level);
         if (before !== 'routed') setLevel('routed');
         try { await loadCfWorkerKeys(); } catch {}
+        // Closed while the lookup ran: the visitor withdrew the offer, so the send does not go ahead.
+        if (!overlay.isConnected) { if (before !== 'routed' && !guestQuotaOn()) setLevel(before); return; }
+        if (guestQuotaOn() && usable && !usable()) {
+            status.textContent = 'Guest access is on, but none of the models in your priority list runs on it. Add a Groq, Kilo, OpenRouter or TokenHarbor model in Settings → Models, or add your own key.';
+            guestBtn.disabled = false;
+            return;
+        }
         if (guestQuotaOn()) { overlay.remove(); retry(); return; }
         if (before !== 'routed') setLevel(before);
         status.textContent = 'The guest quota is off right now. Add your own key, or try again later.';

@@ -41,7 +41,12 @@ function _deviceInfo() {
     return _device;
 }
 
-function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'routed'; }
+/** A self-hosted Worker is configured (Settings → Privacy): the saved Developer key is that Worker's, not FreeGent's, so nothing is uploaded to proxy.freegent.ai with it. */
+function _ownWorker(): boolean {
+    try { return !!(localStorage.getItem('fg_search_proxy') || '').trim(); } catch { return false; }
+}
+
+function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'routed' && !_ownWorker(); }
 
 interface DevLogEntry { ts: string; level: 'error' | 'warn'; source: string; text: string; count?: number; }
 

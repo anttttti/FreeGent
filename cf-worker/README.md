@@ -19,7 +19,7 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 - **Turnstile on the fetch path.** Without it, `?url=` would be an open web relay for any script. The page passes an invisible Cloudflare Turnstile check once per session and trades it at `POST /session` for a session token: an HMAC over the expiry and the client's network (IPv4 address or IPv6 /64), valid four hours. The page sends the token as `X-FG-Session` (`relay-session.ts`). Without `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET` and `FG_SESSION_KEY`, the fetch path answers `503`, unless `FG_OPEN_RELAY=1` marks the Worker as private.
 - **Rate limit.** A per-IP limit (`ratelimits` in `wrangler.toml`) bounds use of Worker keys (Developer key and guest quota) and of the open `?url=` fetch path, and guesses at the Developer key.
 - **Host allow-list** for `POST`, HTTPS only, no credentials in URLs.
-- **Nothing is retained** apart from the opt-in logs above. API keys, whether the user's or injected, are forwarded to the provider and not stored.
+- **Nothing is retained** apart from the opt-in logs above and, with the guest quota on, one counter per client network (the Durable Object `GuestCounter`, named by the IPv4 address or the IPv6 /64: the UTC day and a request count, kept until you delete the object). API keys, whether the user's or injected, are forwarded to the provider and not stored.
 
 ## Deploy your own
 
@@ -27,6 +27,7 @@ A small proxy that lets the static FreeGent site call model providers, which mos
 2. In `wrangler.toml`, delete `workers_dev = false` and the `routes = …` line (they bind the official instance to `proxy.freegent.ai`). Change `name` to change the URL slug.
 3. Add your site's origin to `ALLOWED_ORIGINS` in `worker.js`.
 4. Set up Turnstile for the fetch path. In the Cloudflare dashboard, go to Turnstile → Add widget, with your site's hostname and mode Managed. Put its site key in `wrangler.toml` (`TURNSTILE_SITE_KEY` under `[vars]`), then:
+   Run the commands below from `cf-worker/`:
    ```bash
    npx wrangler secret put TURNSTILE_SECRET     # the widget's secret key
    npx wrangler secret put FG_SESSION_KEY       # any long random string (openssl rand -hex 32)

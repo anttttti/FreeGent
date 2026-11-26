@@ -16,7 +16,9 @@ export function route(args, { stdinTTY, stdoutTTY }) {
     // with text piped in; codex R312).
     if (!stdinTTY || !stdoutTTY) {
         const i = args.indexOf('--prompt');
-        if (i >= 0 && i + 1 < args.length) return { program: 'cli', args: ['-p', args[i + 1], ...args.slice(0, i), ...args.slice(i + 2)] };
+        // `--prompt --model m` has no message: the next option must not become the request.
+        if (i >= 0 && (i + 1 >= args.length || args[i + 1].startsWith('--'))) return { program: 'error', message: 'freegent: --prompt needs a message' };
+        if (i >= 0) return { program: 'cli', args: ['-p', args[i + 1], ...args.slice(0, i), ...args.slice(i + 2)] };
         return { program: 'cli', args: ['-p', ...args] };
     }
     return { program: 'tui', args };

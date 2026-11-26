@@ -89,3 +89,17 @@ describe('a per-account quota error cools down the provider\'s other free models
         expect(getCooldownRemaining('tokenharbor|mimo-v2.6-flash:free')).toBe(0);
     });
 });
+
+describe('an error body that echoes a saved key', () => {
+    it('is redacted before it is cut to its display length (no fragment of the key is left)', async () => {
+        const { _httpErrorFromResponse } = await import('../retry.ts');
+        const key = 'gsk_' + 'A1b2C3d4'.repeat(4);
+        localStorage.setItem('fg_groq_key', key);
+        try {
+            const text = 'x'.repeat(100) + ' Invalid key ' + key;   // the key crosses the 120-character cut
+            const e: any = await _httpErrorFromResponse(new Response(text, { status: 400, headers: { 'content-type': 'text/plain' } }));
+            expect(e.message).not.toContain('gsk_');
+            expect(e.message).not.toContain('A1b2C3d4');
+        } finally { localStorage.removeItem('fg_groq_key'); }
+    });
+});

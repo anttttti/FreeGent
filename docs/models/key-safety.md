@@ -8,14 +8,14 @@ The key fields show dots, but that only stops someone reading over your shoulder
 
 - **anyone using your browser profile**: they open the browser's developer tools, or simply use FreeGent with your keys;
 - **anything running as your user on the computer**: the browser keeps `localStorage` in files in your profile folder, and it does not encrypt them;
-- **someone with your disk**, a backup or a copy of the profile, unless the disk is encrypted;
+- **someone with your disk**, a backup or a copy of the profile, unless that disk or backup is itself encrypted (encrypting the original disk does not protect a copy);
 - **a script injected into the FreeGent page itself**.
 
 They cannot be read by:
 
-- **code the agent runs**: JavaScript, Python and bash run in sandboxes that have no access to the page's storage;
+- **code the agent runs in the browser**: JavaScript, Python and bash in the in-browser sandbox have no access to the page's storage. On the local WebUI or the terminal, approved commands run as your OS account (inside bubblewrap when it is installed), so see [local execution](../local/index.md) for what they can reach;
 - **other people's accounts on the same computer**: your browser profile is private to your OS account;
-- **the logs you send**: chat logs and developer logs have saved keys replaced with `[redacted]`, and so do provider and MCP error messages that echo a key back.
+- **the logs you send**: chat logs and developer logs have saved keys replaced with `[redacted]`, and so do provider and MCP error messages that echo a key back. Redaction matches saved values of eight characters or more (shorter MCP header values are matched when they contain a digit), so a short credential echoed in an error can remain.
 
 ## Everyday protection
 

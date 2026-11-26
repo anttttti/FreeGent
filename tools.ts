@@ -2,6 +2,12 @@
 // Depends on: config.js, workspace.js, fetch-blacklist.js, history.js. All top-level consts are module-private.
 
 import { _searchSignal } from './search-providers.js';
+
+/** `<source> HTTP <status>`, with the reason when the Worker itself refused (its session check, a private address): fetch_url already says so. */
+async function _relayHttpError(source: string, resp: Response): Promise<string> {
+    const why = resp.headers.get('X-FG-Proxy-Error') ? await resp.json().then((j: any) => String(j?.error || ''), () => '') : '';
+    return `${source} HTTP ${resp.status}${why ? ` — ${why}` : ''}`;
+}
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
 import { parseExpectations } from './page-expect.js';
@@ -1025,7 +1031,7 @@ async function _handleAcademicSearch(args: any) {
             const url = `https://export.arxiv.org/api/query?search_query=${searchQ}&max_results=${n}&sortBy=relevance`;
             const proxy = getEffectiveProxy();
             const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
-            if (!resp.ok) return { error: `arXiv HTTP ${resp.status}` };
+            if (!resp.ok) return { error: await _relayHttpError('arXiv', resp) };
             const xml = await resp.text();
             const doc = new DOMParser().parseFromString(xml, 'application/xml');
             const NS  = 'http://www.w3.org/2005/Atom';
@@ -1047,7 +1053,7 @@ async function _handleAcademicSearch(args: any) {
             const url  = `https://api.semanticscholar.org/graph/v1/paper/search?query=${q}&fields=title,abstract,url,year,authors,citationCount&limit=${n}`;
             const proxy = getEffectiveProxy();
             const resp  = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
-            if (!resp.ok) return { error: `Semantic Scholar HTTP ${resp.status}` };
+            if (!resp.ok) return { error: await _relayHttpError('Semantic Scholar', resp) };
             const data  = await resp.json();
             return { results: (data.data || []).map(p => ({
                 title: p.title, authors: (p.authors || []).map(a => a.name).slice(0, 3).join(', '),
@@ -2353,7 +2359,7 @@ async function _handleWebSearch(args) {
             const proxy = getEffectiveProxy();
             const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
             if (resp.status === 429) return { error: 'GDELT allows one request per 5 seconds — wait a few seconds and retry once, or use another source.' };
-            if (!resp.ok) return { error: `GDELT HTTP ${resp.status}` };
+            if (!resp.ok) return { error: await _relayHttpError('GDELT', resp) };
             const data = await resp.json().catch(e => { if (e?.name === 'AbortError' || e?.name === 'TimeoutError') throw e; return null; });   // a stalled body is a timeout, not a non-JSON reply
             if (!data) return { error: 'GDELT returned a non-JSON reply (usually a rate-limit or no-match message) — retry once or use another source.' };
             const _an = annotateUrl;
@@ -2483,6 +2489,7 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
         args = { ...args, url: `https://raw.githubusercontent.com/${_o}/${_r}/${_b}/${_p}` };
     }
     const _ghRootMatch = _sandboxed ? null : /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/?(?:\?.*)?$/.exec(args.url);
+    let _gotHeaders = false;   // a failure after the response arrived (a relayed body past the Worker's cap, a dropped stream) says nothing about the site blocking us
     try {
         const method  = (args.method || 'GET').toUpperCase();
         const reqHdrs = { ...(args.headers || {}) };
@@ -2535,6 +2542,7 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
             resp = await fetch(args.url, { method, headers: reqHdrs, body, signal: _fetchSignal,
                                            ...(_sandboxed && { redirect: 'manual' as const }) });
         }
+        _gotHeaders = true;
 
         const status = resp.status;
         const ct     = resp.headers.get('content-type') || '';
@@ -2619,7 +2627,7 @@ async function _handleFetchUrlInner(args, meta: { noStore: boolean }) {
         // treat as a temporary block and refresh the blacklist timer.
         const method = (args.method || 'GET').toUpperCase();
         const hasAuth = Object.keys(args.headers || {}).some(k => k.toLowerCase() === 'authorization' || k.toLowerCase() === 'x-api-key');
-        const _isPlainCatch = method === 'GET' && !hasAuth && args.body === undefined
+        const _isPlainCatch = !_gotHeaders && method === 'GET' && !hasAuth && args.body === undefined
             && !/\.json(\?|$)/.test(args.url) && !/\/api\//.test(args.url);
         if (_isPlainCatch && typeof blacklistAdd === 'function') blacklistAdd(args.url);
         return { error: `fetch_url: ${e.message}` };

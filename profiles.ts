@@ -1,3 +1,4 @@
+import { keyVaultEnabled, keyVaultUnlocked } from './key-vault.js';
 import { patchPrefs } from './prefs.js';
 // profiles.js — FreeGent settings profiles
 // Depends on config.js (ls, getters), settings-ui.js (populateSettingsForm, updateProviderFields)
@@ -200,6 +201,11 @@ function profileApply(settings) {
     }
     // A profile can change where requests go but never carries a key, so the key already stored would be sent to whatever address the profile names
     // (opencode §8). When the endpoint's ORIGIN changes, the keys that were entered for the old one are removed and must be entered again.
+    // With the key lock closed the stored key reads as absent, so it could not be removed: the endpoint is not moved until it is open.
+    if (settings?.fg_openai_url && keyVaultEnabled() && !keyVaultUnlocked() && _originOf(localStorage.getItem('fg_openai_url')) !== _originOf(patch.fg_openai_url)) {
+        try { alert('This profile moves the OpenAI-compatible endpoint, and the key lock is closed, so the key stored for the old address cannot be removed. Unlock it in Settings → Credentials and apply the profile again.'); } catch {}
+        return;
+    }
     const clearedKeys = _dropKeysIfEndpointMoves(patch, settings);
     // All or nothing: a write that fails (quota, blocked storage) must not leave a mixture of the old and the requested settings that nothing reports.
     const prior: Record<string, string | null> = {};

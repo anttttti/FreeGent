@@ -21,3 +21,13 @@ describe('every search source has a deadline', () => {
         expect(JSON.stringify(b)).toMatch(/error/i);
     });
 });
+
+describe('a search source says why the Worker refused it', () => {
+    it('arXiv through the relay reports the Worker\'s own error, not only the status', async () => {
+        W.fetch.mockReset();
+        W.fetch.mockResolvedValue(new Response(JSON.stringify({ error: 'Cloudflare check could not run' }), { status: 401, headers: { 'X-FG-Proxy-Error': '1' } }));
+        const r = await W.executeToolAsync('academic_search', { query: 'x', source: 'arxiv' }, null);
+        expect(JSON.stringify(r)).toMatch(/401/);
+        expect(JSON.stringify(r)).toMatch(/Cloudflare check could not run/);
+    });
+});

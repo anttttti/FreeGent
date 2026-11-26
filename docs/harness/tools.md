@@ -1,6 +1,6 @@
 # Tools
 
-Tools are the actions the agent can take. Each can be turned on or off per [mode](../webui/chats/modes.md) in **Settings → Tools**. Fewer tools mean a shorter prompt and fewer wrong choices, so the defaults leave specialised tools off.
+Tools are the actions the agent can take. Each can be turned on or off per [mode](../webui/chats/modes.md) in **Settings → Tools** (the browser tools below are not listed there: only command-line runs have the bridge they need). Fewer tools mean a shorter prompt and fewer wrong choices, so the defaults leave specialised tools off.
 
 | Tool | What it does | Default |
 |---|---|---|
@@ -17,6 +17,6 @@ Tools are the actions the agent can take. Each can be turned on or off per [mode
 | `repo_map`, `ast_query` | Compact code map; symbol queries with exact line numbers (`ast_query` needs the AST setting) | off |
 | `run_git` | Git in the repository the dev server runs in; needs the Local sandbox and the git setting | off |
 | `update_task_status` | Move a task on the board | on in Cowork only |
-| `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, … | Drive a text-only browser through a Playwright bridge (CLI: `--browser-url`) | off |
+| `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, … | Drive a text-only browser through a Playwright bridge. Command-line runs only: give `--browser-url <url>` and list the tools in `--enable-tools` | off |
 
 Tool results are truncated before they enter the history; see [Keeping tool results small](context.md#keeping-tool-results-small). [MCP servers](mcp.md) add more tools, named `mcp__<server>__<tool>`.

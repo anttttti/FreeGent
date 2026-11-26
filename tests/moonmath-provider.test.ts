@@ -122,3 +122,11 @@ it('discovers only advertised Free-plan IDs, deduplicates aliases, and excludes 
     expect(boxes.map(b => b.dataset.spec).filter(s => s?.startsWith('moonmath|')).sort()).toEqual([DEEPSEEK, GLM].sort());
     expect(document.getElementById('fg-mu-body')?.textContent).not.toContain('dolly-2-security');
 });
+
+it('"Priority model" for the Worker resolves through the usable priority list, not a model without a key', () => {
+    W.saveMainModelList([DEEPSEEK, 'groq|openai/gpt-oss-20b']);
+    localStorage.setItem('fg_groq_key', 'synthetic-groq-credential');
+    localStorage.setItem('fg_worker_model', 'priority');
+    expect(W.getActiveMainModelList()[0]).toBe('groq|openai/gpt-oss-20b');
+    expect(W.resolveWorkerModelSpec(null, null)).toBe('groq|openai/gpt-oss-20b');
+});

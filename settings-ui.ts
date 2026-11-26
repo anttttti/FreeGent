@@ -322,6 +322,7 @@ function applyFoundKeys(found: Record<string, string>) {
     }
     (window as any).renderModelCatalogTable?.();
     (window as any).renderMainModelList?.();
+    (window as any).renderWorkerModelSelector?.(); (window as any).renderUtilityModelSelector?.(); (window as any).renderMediaModelSelectors?.();
 }
 
 // "Extract from file": same prefix scan as the paste box, over any text file.
@@ -464,6 +465,7 @@ function saveSettings() {
     // Key changes flip "no key" / ✗ status in the model lists.
     renderModelCatalogTable();
     renderMainModelList();
+    renderWorkerModelSelector(); renderUtilityModelSelector(); renderMediaModelSelectors();   // a newly keyed model becomes selectable there too
     updateModelLabel();
     updateActiveModelDisplay();
 }
@@ -509,9 +511,10 @@ function populateSettingsForm() {
         const hint = el.dataset.fgPlaceholder ??= el.placeholder;
         if (typeof isServerKeyPlaceholder === 'function' && isServerKeyPlaceholder(val)) {
             el.value = '';
-            el.placeholder = 'Set in ~/.config/freegent/credentials (kept on the server)';
-            el.title = `This key is set in ~/.config/freegent/credentials and stays on the dev server; the page never receives it. Type a key here (${hint || 'the provider\'s key'}) to use that one instead.`;
+            el.placeholder = 'Set on the dev server (kept there)';
+            el.title = `The dev server holds this key (from its environment or credentials file) and keeps it; the page never receives it. Type a key here (${hint || 'the provider\'s key'}) to use that one instead.`;
             el.dataset.fgServerKey = '1';
+            el.dataset.fgBase = '';   // the field is empty now: a decrypted browser override must not stay readable in the baseline after Lock now
             return;
         }
         if (el.dataset.fgServerKey) { el.placeholder = hint; el.removeAttribute('title'); delete el.dataset.fgServerKey; }

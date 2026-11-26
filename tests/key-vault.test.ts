@@ -1,13 +1,14 @@
 // key-vault.ts: the optional passkey lock for saved credentials. WebAuthn is mocked: the "authenticator"
 // computes PRF as HMAC(secret, salt), so a different secret stands for a different passkey. Ordering cases
 // are the repros from the codex / opencode / hermesagent reviews of the passphrase version.
-import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import {
     KEY_VAULT_LS, isVaultName, keyVaultEnabled, keyVaultUnlocked, keyVaultDamaged, createVaultPasskey, enableKeyVault,
     unlockKeyVault, lockKeyVault, disableKeyVault, resetKeyVault, flushKeyVault, credentialsVersion,
 } from '../key-vault.ts';
 import { storedCredentialValues } from '../stored-credentials.ts';
+import { assertCredentialsReadable } from '../convo-log.ts';
 
 const GROQ = 'gsk_' + 'A'.repeat(40);
 const ODD = 'opaque-moonmath-value-123';
@@ -48,6 +49,44 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 beforeEach(async () => {
     Object.assign(wa, { secret: 'passkey-A', prfEnabled: true, prfAtCreate: true, cancel: false, hold: null, gets: 0 });
     await flushKeyVault(); resetKeyVault(); localStorage.clear();
+});
+
+describe('key lock: races between tabs and storage limits (Sol 6.2 review of 5eadd6c)', () => {
+    it('unlock installs the newest saved revision when another tab saved while the passkey prompt was open', async () => {
+        await lockOn();
+        const old = rawVault()!;
+        localStorage.setItem('fg_moonmath_key', ODD); await flushKeyVault();
+        const newer = rawVault()!;
+        lockKeyVault();
+        Storage.prototype.setItem.call(localStorage, KEY_VAULT_LS, old);       // what this tab had read before the prompt
+        let release!: () => void; wa.hold = new Promise<void>(r => { release = r; });
+        const p = unlockKeyVault(); await tick();
+        Storage.prototype.setItem.call(localStorage, KEY_VAULT_LS, newer);     // the other tab's save, same salt
+        release(); await p;
+        expect(localStorage.getItem('fg_moonmath_key')).toBe(ODD);
+    });
+    it('a key saved while the lock is being set up is not lost', async () => {
+        localStorage.setItem('fg_groq_key', GROQ);
+        const setup = await createVaultPasskey();
+        const enc = crypto.subtle.encrypt.bind(crypto.subtle);
+        const spy = vi.spyOn(crypto.subtle, 'encrypt').mockImplementationOnce(async (...a: any[]) => { localStorage.setItem('fg_moonmath_key', ODD); return (enc as any)(...a); });
+        try { await expect(enableKeyVault(setup)).rejects.toThrow(/changed while the lock was being set up/); } finally { spy.mockRestore(); }
+        expect(keyVaultEnabled()).toBe(false);
+        expect(localStorage.getItem('fg_moonmath_key')).toBe(ODD);   // still plain, still there
+    });
+});
+
+describe('chat logs with the key lock', () => {
+    it('are not built while the vault is closed (the saved values are unknown then), and are while it is open or off', async () => {
+        expect(() => assertCredentialsReadable()).not.toThrow();      // no lock
+        localStorage.setItem('fg_groq_key', GROQ);
+        await lockOn();
+        expect(() => assertCredentialsReadable()).not.toThrow();      // unlocked
+        lockKeyVault();
+        expect(() => assertCredentialsReadable()).toThrow(/key lock is closed/);
+        await unlockKeyVault();
+        expect(() => assertCredentialsReadable()).not.toThrow();
+    });
 });
 
 describe('key vault', () => {

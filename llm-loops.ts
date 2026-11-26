@@ -1728,6 +1728,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
         }
 
         const ep    = activeEndpoint ?? _defaultEndpoint();
+        const _fallbackAtStart = _sessionFallback;   // a fallback the retry layer sets during this call is the endpoint that answered (the strike must not go to the one that was refused)
         const _epKey = `${ep.provider ?? getProvider()}|${ep.model}`;
 
         // Pre-flight probe
@@ -2212,7 +2213,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
             ...(Array.isArray(r.result?.files_written) ? r.result.files_written : []),
         ]));
         consecutiveToolFails = updateFailStreak(consecutiveToolFails, _exec, _READ_ONLY_TOOLS);
-        _noteEmptyArgSteps(ep, _refused ? [] : _exec, (fb) => { activeEndpoint = fb; _sessionFallback = fb; });   // a repeat refusal is neutral
+        _noteEmptyArgSteps(_sessionFallback && _sessionFallback !== _fallbackAtStart ? _sessionFallback : ep, _refused ? [] : _exec, (fb) => { activeEndpoint = fb; _sessionFallback = fb; });   // a repeat refusal is neutral
         const _failedThisStep = consecutiveToolFails > _prevToolFails;
         convoLogTurn({
             step, model: ep.model, provider: ep.provider ?? getProvider(),

@@ -134,6 +134,8 @@ const SEARCH_HEADER_MAP = {
 // sessions"), so the switch also needs the Turnstile settings. Flip it in the Cloudflare dashboard (Settings →
 // Variables and Secrets) or with `npx wrangler secret put FG_GUEST_QUOTA`: no code change, no commit.
 const GUEST_HOSTS = new Set(['api.groq.com', 'api.kilo.ai', 'openrouter.ai', 'api.openrouter.ai', 'tokenharbor.ai', 'api.tokenharbor.ai']);
+// Model catalogs that need no key: a keyless GET of one passes through anonymously, never as a guest call (no Turnstile check, no quota use, no Worker key).
+const PUBLIC_CATALOGS = new Set(['https://api.kilo.ai/api/gateway/models', 'https://openrouter.ai/api/v1/models']);
 const GUEST_OFF = 'The guest quota is off right now: add your own key in Settings → Credentials';
 // Guest model calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter):
 // one heavy guest cannot spend the whole quota. FG_GUEST_DAILY overrides it, like FG_GUEST_QUOTA without a commit.
@@ -146,16 +148,16 @@ function _guestRefusal(kind, message) {
         status: 403, headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', 'X-FG-Guest': kind },
     });
 }
-// Counts one guest call for this network today and returns the count, or Infinity when the counter cannot be reached
-// (no counting, no guest quota).
+// Counts one guest call for this network today and returns the count, or null when the counter cannot be reached
+// (no counting, no guest quota: the caller answers 503, which is not a spent day).
 async function _guestCount(request, env) {
     try {
         const day = new Date().toISOString().slice(0, 10);
         const stub = env.FG_GUEST_COUNTER.get(env.FG_GUEST_COUNTER.idFromName(_clientNet(request)));
         const r = await stub.fetch('https://guest-counter/hit', { method: 'POST', body: JSON.stringify({ day }) });
         const { count } = await r.json();
-        return Number.isFinite(count) ? count : Infinity;
-    } catch { return Infinity; }
+        return Number.isFinite(count) ? count : null;
+    } catch { return null; }
 }
 
 // One counter per client network: {day, count}, reset when the UTC day changes. A Durable Object handles its requests
@@ -574,8 +576,8 @@ export default {
                 const isEmpty = !auth || auth === 'Bearer' || auth === 'Bearer ' || auth === 'Bearer public';
                 const { hostname } = new URL(target);
                 const unlocked = await _unlocked(request, env);
-                let guest = false;
-                if (isEmpty && !unlocked && GUEST_HOSTS.has(hostname) && env && env[PROVIDER_KEY_MAP[hostname]]) {
+                let guest = false, rateChecked = false;
+                if (isEmpty && !unlocked && GUEST_HOSTS.has(hostname) && env && env[PROVIDER_KEY_MAP[hostname]] && !(method === 'GET' && PUBLIC_CATALOGS.has(target))) {
                     if (!_guestQuotaOn(env)) return _guestRefusal('off', GUEST_OFF);
                     if (!(await _relaySessionOk(request, env))) return _sessionRequired(env);
                     // The operator's key buys chat completions and the model list. Only OpenRouter is held to free models below: a Groq, Kilo or TokenHarbor key
@@ -589,8 +591,13 @@ export default {
                             return _err(403, 'Guest access covers free models only (a name ending in :free): add your own key in Settings → Credentials');
                     }
                     // Counted after the checks, so a refused request does not use up the visitor's day.
+                    // The per-IP rate limit comes first: a call it refuses must not use up the day either.
+                    if (await _rateLimited(request, env, 'key')) return _err(429, 'Worker-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
+                    rateChecked = true;
                     const limit = _guestDaily(env);
-                    if (await _guestCount(request, env) > limit)
+                    const used = await _guestCount(request, env);
+                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials');
+                    if (used > limit)
                         return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
                     guest = true;
                 }
@@ -598,7 +605,7 @@ export default {
                 const search = unlocked ? SEARCH_HEADER_MAP[hostname] : null;
                 const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
                 const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
-                if (injecting && await _rateLimited(request, env, 'key'))
+                if (injecting && !rateChecked && await _rateLimited(request, env, 'key'))
                     return _err(429, 'Worker-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
                 if (envKey && env[envKey]) headers['Authorization'] = `Bearer ${env[envKey]}`;
                 // Search providers that use non-standard auth headers.

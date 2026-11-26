@@ -283,6 +283,10 @@ export async function enableKeyVault(setup: PasskeySetup): Promise<void> {
         }
         const blob = await _encrypt(key, { v: VAULT_VERSION, kind: 'passkey', cred: _b64(setup.cred), prf: _b64(setup.prfSalt), salt: _b64(salt) }, values);
         if (gen !== _vaultGen || _rawGet(KEY_VAULT_LS) !== null) throw new Error('The key lock was changed in another tab. Reload and try again.');
+        // A key saved, changed or removed while the passkey prompt and the encryption ran is not in the blob and would be lost (or stay in plain text).
+        const now = new Map<string, string>();
+        for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k && isVaultName(k)) { const v = _rawGet(k); if (v !== null) now.set(k, v); } }
+        if (now.size !== values.size || [...now].some(([k, v]) => values.get(k) !== v)) throw new Error('A saved key changed while the lock was being set up. Try again.');
         _rawSet(KEY_VAULT_LS, JSON.stringify(blob));   // the encrypted copy first, then the plain ones go
         for (const k of values.keys()) _rawRemove(k);
         _drop(true);
@@ -300,13 +304,19 @@ export async function unlockKeyVault(): Promise<void> {
     if (!_enabled) throw new Error('The key lock is not on.');
     if (!keyVaultSupported()) throw new Error(`The key lock cannot be used here: ${keyVaultUnavailableReason() ?? 'no passkeys'}.`);
     await _writeChain;                             // read what this page's own saves wrote
-    const { blob } = _readVault();
+    let { blob } = _readVault();
     if (!blob) throw new Error('The saved key lock is damaged or from an older version. Use Forgot it to delete it and enter your keys again.');
     const prfOut = await _prfFromPasskey(_unb64(blob.cred), _unb64(blob.prf));
     const key = await _keyFromPrf(prfOut, _unb64(blob.salt));
     let values: Map<string, string>;
     try { values = await _decrypt(key, blob); }
     catch { throw new Error('This passkey does not open the saved keys.'); }
+    // Another tab may have saved while the passkey prompt was open (a save keeps the salt, changes the ciphertext): install the latest, not the one read before the prompt.
+    for (let tries = 0; tries < 3 && vg === _vaultGen && lg === _lockGen; tries++) {
+        const latest = _readVault().blob;
+        if (!latest || latest.salt !== blob.salt || latest.ct === blob.ct) break;
+        try { values = await _decrypt(key, latest); blob = latest; } catch { break; }
+    }
     if (vg !== _vaultGen || lg !== _lockGen || _readVault().blob?.salt !== blob.salt) throw new Error('Cancelled');
     _lockGen++;
     _pending.clear();
@@ -338,7 +348,10 @@ export async function disableKeyVault(): Promise<void> {
         // A Lock now or reset during the decrypt must not be undone by writing the keys back as plain text.
         if (lg !== _lockGen || _cryptoKey !== key || _readVault().blob?.salt !== blob.salt) throw new Error('The key lock changed meanwhile. Try again.');
         for (const [k, p] of _pending) { if (p.value === null) values.delete(k); else values.set(k, p.value); }   // and ours still in flight
-        for (const [k, v] of values) _rawSet(k, v);
+        // Storage that fills up half way must leave the encrypted copy and no half-restored plain keys: the lock stays on.
+        const restored: string[] = [];
+        try { for (const [k, v] of values) { _rawSet(k, v); restored.push(k); } }
+        catch (e) { for (const k of restored) { try { _rawRemove(k); } catch {} } throw new Error(`The keys could not be written back (${(e as any)?.message ?? e}). The lock stays on.`); }
         _rawRemove(KEY_VAULT_LS);
         _drop(true);
         _enabled = false; _damaged = false; _salt = null;

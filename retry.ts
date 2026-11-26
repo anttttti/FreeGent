@@ -637,7 +637,7 @@ export async function _httpErrorFromResponse(resp, prefix = '') {
     } catch {
         // A non-JSON body is often an HTML error page from a proxy: show its text, not its markup.
         const plain = text.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        if (plain) msg += ': ' + plain.slice(0, 120);
+        if (plain) msg += ': ' + redactText(plain, storedCredentialValues()).slice(0, 120);   // redacted before the cut: a key across it would leave a fragment
     }
     // MoonMath's concurrent-request refusal says Retry-After: 60, but a slot frees when one of the key's other requests finishes.
     // Requesty's in-flight limit ("reached its limit of concurrent requests") frees the same way and sends no Retry-After.

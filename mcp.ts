@@ -237,7 +237,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
         // API key with 400 + an isError result) — use it when it matches the request.
         if (id !== undefined) { try { msg = _parseRpcBody(text, ct, id); } catch { msg = null; } }
         if (!msg || msg.id !== id || !('result' in msg || 'error' in msg)) {
-            const detail = text.slice(0, 200).trim();
+            const detail = redactMcpSecrets(text, headers).slice(0, 200).trim();   // redacted before it is cut: a key across the cut would leave a fragment
             if (resp.status === 401 || resp.status === 403)
                 throw new Error(`MCP HTTP ${resp.status}: authentication failed — check the server's key/header${detail ? ` (${detail})` : ''}`);
             throw new Error(`MCP HTTP ${resp.status}${detail ? `: ${detail}` : ''}`);
@@ -809,10 +809,13 @@ function mcpToolRisk(name: string): 'read' | 'write' | 'destructive' {
 // Redact the server's auth header values and anything credential-shaped in text bound for the
 // model, logs or the UI — a server that echoes the request (e.g. in an error message) must not
 // hand the key to the LLM. Rules live in secrets.ts.
+// Headers that carry no secret: a saved `Content-Type: application/json` would otherwise turn every `application/json` in the results of unrelated servers into [redacted].
+const _PLAIN_HEADERS = /^(content-type|accept|accept-encoding|accept-language|user-agent|cache-control|mcp-protocol-version|origin|referer)$/i;
 function redactMcpSecrets(text: string, headers?: Record<string, string>): string {
-    let out = redactText(text, [...Object.values(headers ?? {}), ...storedCredentialValues()]);
+    const secrets = Object.entries(headers ?? {}).filter(([k]) => !_PLAIN_HEADERS.test(k)).map(([, v]) => v);
+    let out = redactText(text, [...secrets, ...storedCredentialValues()]);
     // redactText leaves values under 8 characters alone (they would mangle ordinary text). A short header value that holds a digit is a key, not a word: it goes too (codex R775).
-    for (const v of Object.values(headers ?? {})) {
+    for (const v of secrets) {
         const t = String(v).replace(/^(?:Bearer|Basic|Token)\s+/i, '').trim();
         if (t.length >= 4 && t.length < 8 && /\d/.test(t)) out = out.split(t).join('[redacted]');
     }

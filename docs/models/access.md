@@ -1,10 +1,10 @@
 # Access without your own key
 
-Every model call needs an API key for its provider. FreeGent uses one of three, in this order:
+Every call to a cloud provider needs an API key for it (a local model server is set up under [local models](../local/index.md)). FreeGent uses one of three, in this order:
 
 1. **Your own key**, from Settings → Credentials (or the credentials file when you run FreeGent yourself). It always comes first.
-2. **Guest access**, while FreeGent offers it: a limited quota on FreeGent's own free-tier accounts for a few providers, for visitors who have not added a key yet.
-3. **The Developer key**, for the person who runs the Worker: it unlocks all of the Worker's own keys for their own sessions.
+2. **The Developer key**, for the person who runs the Worker: it unlocks all of the Worker's own keys for their own sessions.
+3. **Guest access**, while FreeGent offers it: a limited quota on FreeGent's own free-tier accounts for a few providers, for visitors who have not added a key yet. The Worker uses it only when a request carries no key of its own and no valid Developer key.
 
 The keys behind 2 and 3 are the Worker's keys ("Worker keys"). They are stored as secrets in FreeGent's Cloudflare Worker and never reach your browser: the Worker makes the request with the key and returns the answer. So both work only at the **Routed** privacy level, where requests go through the Worker. See [How requests reach providers](proxy.md).
 
@@ -23,7 +23,7 @@ Guest access lets you try FreeGent before getting a key. At the default Routed p
 - **Use the guest quota**: Privacy switches to Routed, Cloudflare's bot check runs once (usually invisibly), and your message runs on a guest model.
 - **Add my own key**: opens Settings → Credentials. [Default providers](providers.md) lists where to get free keys.
 
-At Provider-only nothing is sent to the Worker until you choose the guest quota.
+At Provider-only nothing is sent to the Worker until you choose the guest quota. At Routed the page asks the Worker's `/keys` list at startup and whenever the privacy level changes, to learn which Worker keys and guest access exist; no prompt or key is sent with it, and guest models are used only after that answer says guest access is on.
 
 ### Providers covered
 
@@ -55,5 +55,7 @@ The Developer key is a secret that the operator of a Worker sets on it (`FG_DEV_
 It is meant for one person: the Worker's operator. It is never needed to use FreeGent, and it must not be shared, because it unlocks every key on the Worker, including providers whose terms forbid serving other people. To let others use your keys within those terms, use guest access instead.
 
 ## Running your own Worker
+
+The Developer key is attached only to requests for FreeGent's own Worker (`proxy.freegent.ai`). With a Worker URL of your own in Settings → Privacy, a saved Developer key does not unlock that Worker's keys in the WebUI, and no console errors or Autopilot chats are uploaded. The guest offer (**No API key yet**) appears only on FreeGent's hosted pages (freegent.ai, `*.github.io`, `*.pages.dev`), not on a custom domain.
 
 If you host FreeGent and its Worker yourself, Worker keys, the Developer key and guest access are yours to set up: provider keys and `FG_DEV_KEY` as Worker secrets, and `FG_GUEST_QUOTA` (with `FG_GUEST_DAILY` for the daily limit) to switch guest access on or off without a code change. See [Hosting your own site and Worker](../local/webui.md#hosting-your-own-site-and-worker) and the [Worker README](https://github.com/anttttti/FreeGent/blob/main/cf-worker/README.md#worker-keys-and-the-guest-quota-optional).

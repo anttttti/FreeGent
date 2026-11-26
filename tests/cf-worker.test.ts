@@ -449,6 +449,15 @@ describe('CF Worker guest quota', () => {
         expect(sent()).toBeUndefined();
     });
 
+    it('a keyless GET of a public model catalog passes anonymously: no session, no quota, no Worker key', async () => {
+        const get = (url: string) => new Request('https://fg-proxy.example.workers.dev/', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'CF-Connecting-IP': IP }, body: JSON.stringify({ url, method: 'GET', headers: {} }) });
+        const off = { ...ON, KILO_API_KEY: 'kilo-op', FG_GUEST_QUOTA: '0' };
+        const r = await worker.fetch(get('https://api.kilo.ai/api/gateway/models'), off);
+        expect(r.status).toBe(200);
+        expect(JSON.stringify(sent()[1].headers ?? {})).not.toMatch(/kilo-op/);
+        expect((await worker.fetch(get('https://api.kilo.ai/api/gateway/other'), off)).status).toBe(403);
+    });
+
     it('with the quota off, a keyless guest call is refused with a clear message', async () => {
         const s = await session();
         const r = await worker.fetch(call(GROQ, { session: s }), { ...ON, FG_GUEST_QUOTA: '0' });
@@ -457,6 +466,17 @@ describe('CF Worker guest quota', () => {
         expect(r.headers.get('Access-Control-Expose-Headers')).toMatch(/X-FG-Guest/);
         expect((await r.json()).error).toMatch(/guest quota is off.*Settings → Credentials/);
         expect(sent()).toBeUndefined();
+    });
+
+    it('a guest call the per-IP rate limit refuses does not use up the day, and a counter outage is a 503, not a spent day', async () => {
+        const s = await session();
+        const env = { ...ON, FG_GUEST_DAILY: '2' };
+        for (let i = 0; i < 5; i++) expect((await worker.fetch(call(GROQ, { session: s }), { ...env, FG_RATE_LIMITER: limiter(false) })).status).toBe(429);
+        expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);
+        expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);
+        const down = await worker.fetch(call(GROQ, { session: s }), { ...ON, FG_GUEST_COUNTER: { idFromName: () => 'x', get: () => ({ fetch: async () => { throw new Error('down'); } }) } });
+        expect(down.status).toBe(503);
+        expect(down.headers.get('X-FG-Guest')).toBeNull();
     });
 
     it('caps guest calls per network per UTC day (FG_GUEST_DAILY), and starts again the next day', async () => {
