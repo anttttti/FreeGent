@@ -8,6 +8,7 @@ import type { CommandContext } from '../commands/index';
 import { transformESModules, transformTS, transformJSX } from '../commands/jseval/module-transform';
 import { ProcessExitError } from '../commands/jseval/utils';
 import { skippedSizes } from './file-cache';
+import { _ASSIGNS_LOCATION_RE, _scriptGlobals } from './script-globals';
 
 export interface RequireDeps {
   ctx: CommandContext;
@@ -393,12 +394,17 @@ export function createRequireFunction(deps: RequireDeps): (modPath: string, from
         dirname: modDir,
         filename: resolved,
       };
+      // A setup module that assigns `location` would navigate the shell's frame: it gets the same per-run view as an entry script (AE-11).
+      const ownLoc = typeof window !== 'undefined' && _ASSIGNS_LOCATION_RE.test(transformedContent);
+      const views = ownLoc ? _scriptGlobals() : [];
       const fnParams = [
         'module', 'exports', 'require', '__filename', '__dirname',
         'console', 'process', 'global', 'Buffer', '__import_meta',
+        ...(ownLoc ? ['globalThis', 'window', 'self', 'location'] : []),
       ];
       const fnArgs = [mod, mod.exports, nestedRequire, resolved, modDir,
-        fakeConsole, fakeProcess, globalThis, FakeBuffer, modImportMeta];
+        fakeConsole, fakeProcess, ownLoc ? views[3] : globalThis, FakeBuffer, modImportMeta,
+        ...(ownLoc ? [views[0], views[1], views[2], views[4]] : [])];
 
       // Try synchronous execution first — most npm packages don't use top-level await.
       // This ensures module.exports is populated before require() returns,

@@ -202,12 +202,13 @@ export const wgetCmd: Command = {
       else if (arg === '-qO-' || arg === '-qO') { req.silent = true; req.output = arg === '-qO-' ? '-' : (a[++i] ?? '-'); req.remoteName = false; }
       else if (arg === '-q' || arg === '--quiet') req.silent = true;
       else if (arg === '--header' || arg.startsWith('--header=')) { const h = arg === '--header' ? a[++i] ?? '' : arg.slice(9); const c = h.indexOf(':'); if (c > 0) req.headers[h.slice(0, c).trim()] = h.slice(c + 1).trim(); }
+      else if (arg === '-T' || arg === '--timeout' || arg.startsWith('--timeout=')) { const v = Number(arg === '-T' || arg === '--timeout' ? a[++i] : arg.slice(10)); if (v > 0) req.maxTime = v; }
       else if (arg === '--help' || arg === '-h') { ctx.stdout = 'Usage: wget [-q] [-O FILE|-] [--header "K: V"] URL\n'; return 0; }
       else if (arg.startsWith('-')) { /* ignore other flags (-c, --no-check-certificate, …) */ }
       else req.url = arg;
     }
     if (!req.url) { ctx.stderr += 'wget: missing URL\n'; return 1; }
     const code = await run(ctx, 'wget', req);
-    return code === 22 ? 8 : code === 7 ? 4 : code;   // wget's exit codes: 8 server error, 4 network
+    return code === 22 ? 8 : code === 7 || code === 28 ? 4 : code;   // wget's exit codes: 8 server error, 4 network
   },
 };

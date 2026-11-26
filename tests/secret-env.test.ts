@@ -17,8 +17,8 @@ describe('scrubEnv', () => {
     // codex R143/R144: credential formats whose name holds no secret word reached native commands and /api/execute.
     it('removes Docker registry auth and Bundler host credentials, keeps Bundler settings', () => {
         const env = scrubEnv({ ...base, DOCKER_AUTH_CONFIG: '{"auths":{"r.example":{"auth":"dTpw"}}}', BUNDLE_GEMS__EXAMPLE__COM: 'user:secret',
-            BUNDLE_BUILD__NOKOGIRI: '--use-system-libraries', BUNDLE_PATH: 'vendor/bundle', GIT_AUTHOR_NAME: 'A' });
-        expect(Object.keys(env)).toEqual(expect.arrayContaining(['BUNDLE_BUILD__NOKOGIRI', 'BUNDLE_PATH', 'GIT_AUTHOR_NAME']));
+            BUNDLE_BUILD__NOKOGIRI: '--use-system-libraries', BUNDLE_BUILD__SASSC: '--with-ldflags=-Wl,-rpath,/a:/b', BUNDLE_PATH: 'vendor/bundle', GIT_AUTHOR_NAME: 'A' });
+        expect(Object.keys(env)).toEqual(expect.arrayContaining(['BUNDLE_BUILD__NOKOGIRI', 'BUNDLE_BUILD__SASSC', 'BUNDLE_PATH', 'GIT_AUTHOR_NAME']));
         expect(env.DOCKER_AUTH_CONFIG).toBeUndefined();
         expect(env.BUNDLE_GEMS__EXAMPLE__COM).toBeUndefined();
     });

@@ -440,6 +440,11 @@ describe('performWebSearch routing', () => {
         window.fetch.mockReset();
         window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ type: 'search', query: { original: 'cats' } }) });
         expect(await W.performWebSearch('cats')).toMatchObject({ source: 'Brave', results: [] });
+        // e653578#11: a web section that is there but has no list is a malformed reply, not an empty search
+        window.fetch.mockReset();
+        window.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ type: 'search', web: { type: 'search' } }) });
+        wiki();
+        expect((await W.performWebSearch('cats')).source).toBe('Wikipedia');
     });
 
     it('a Wikipedia search whose summaries are all empty objects is an error, not a result (codex R235)', async () => {

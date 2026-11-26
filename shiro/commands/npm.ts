@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from './index';
+import { readBytesCapped } from '../../read-capped';
 import { extractTarGzToFS, type FileSystemWriter } from '../utils/tar-utils';
 import { maxSatisfying } from '../utils/semver-utils';
 
@@ -331,8 +332,8 @@ async function downloadAndExtract(pkg: ResolvedPackage, ctx: CommandContext, pac
   }
   // A registry tarball of any size was buffered whole (codex R288); real packages are far below this.
   if (Number(response.headers.get('content-length')) > MAX_TARBALL_BYTES) throw new Error(`${pkg.name}: the package archive is larger than ${MAX_TARBALL_BYTES >> 20} MB`);
-  const tarballData = new Uint8Array(await response.arrayBuffer());
-  if (tarballData.length > MAX_TARBALL_BYTES) throw new Error(`${pkg.name}: the package archive is larger than ${MAX_TARBALL_BYTES >> 20} MB`);
+  // Counted while it is read, so a reply with no Content-Length is cut at the limit too.
+  const tarballData = await readBytesCapped(response, MAX_TARBALL_BYTES, () => new Error(`${pkg.name}: the package archive is larger than ${MAX_TARBALL_BYTES >> 20} MB`));
 
   await ctx.fs.mkdir(packageDir, { recursive: true });
 
@@ -381,7 +382,7 @@ async function installPackage(
 async function createBinSymlinks(
   ctx: CommandContext,
   packages: Map<string, ResolvedPackage>
-): Promise<void> {
+): Promise<string[]> {
   const binDir = ctx.fs.resolvePath('node_modules/.bin', ctx.cwd);
 
   // Ensure .bin directory exists
@@ -392,6 +393,7 @@ async function createBinSymlinks(
   }
 
   let binCount = 0;
+  const binErrors: string[] = [];
 
   for (const pkg of packages.values()) {
     try {
@@ -429,7 +431,8 @@ async function createBinSymlinks(
         // Then a bin stub: the file holds the script's absolute path, which the shell runs with node.
         try { await ctx.fs.symlink(targetPath, symlinkPath); }
         catch {
-          await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(`node_modules/${pkg.name}/${cleanBinPath}`, ctx.cwd));
+          try { await ctx.fs.writeFile(symlinkPath, ctx.fs.resolvePath(`node_modules/${pkg.name}/${cleanBinPath}`, ctx.cwd)); }
+          catch (e: any) { binErrors.push(`${binName} (${e?.message ?? e})`); continue; }   // an occupied .bin entry is a failed install, not a saved dependency without its command
           try { await ctx.fs.chmod(symlinkPath, 0o755); } catch { /* no modes here */ }
         }
         binCount++;
@@ -442,6 +445,7 @@ async function createBinSymlinks(
   if (binCount > 0) {
     ctx.stdout += `Created ${binCount} bin symlink(s) in node_modules/.bin\n`;
   }
+  return binErrors;
 }
 
 async function npmInstall(ctx: CommandContext): Promise<number> {
@@ -543,14 +547,22 @@ async function npmInstall(ctx: CommandContext): Promise<number> {
   await Promise.all(installPromises);
 
   // Create .bin symlinks for packages with bin entries
-  await createBinSymlinks(ctx, allResolved);
+  const binErrors = await createBinSymlinks(ctx, allResolved);
+  if (binErrors.length) ctx.stderr += `npm: could not create the command(s) ${binErrors.join(', ')}\n`;
 
-  if (failed.length || unresolved) {
+  if (failed.length || unresolved || binErrors.length) {
     ctx.stderr += `npm: the install is incomplete${failed.length ? ` (${failed.join(', ')} failed)` : ''}; see the errors above.\n`;
     return 1;
   }
   // package.json names the new packages only once they are installed: it used to be written first, and kept a dependency that failed.
-  if (packagesToInstall.length) await ctx.fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  if (packagesToInstall.length) {
+    // The manifest read before the downloads can be stale (another install or an edit finished meanwhile): re-read it and add only this run's entries.
+    let fresh: PackageJson = pkg;
+    try { fresh = JSON.parse(await ctx.fs.readFile(pkgPath, 'utf8') as string); } catch { /* keep the snapshot */ }
+    const section = saveDev ? 'devDependencies' : 'dependencies';
+    fresh[section] = { ...(fresh[section] ?? {}), ...Object.fromEntries(Object.keys(depsToResolve).map(n => [n, pkg[section]![n]])) };
+    await ctx.fs.writeFile(pkgPath, JSON.stringify(fresh, null, 2) + '\n');
+  }
   ctx.stdout += '\nPackages installed successfully.\n';
   return 0;
 }

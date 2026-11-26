@@ -365,6 +365,17 @@ describe('kept-features gate', () => {
         expect(second.transitioned).toBe(true);
     });
 
+    it('bounces a done that deleted the whole file holding the earlier task\'s feature (16bd92f#7)', async () => {
+        for (const k of Object.keys(files)) delete files[k];
+        Object.assign(files, { [T1]: done1, [T4]: t4('todo'), 'index.html': '<html><body><canvas id="chart"></canvas></body></html>', 'search.js': 'function search(){}' });
+        W.loadTaskFiles = async () => Object.keys(files).filter(f => /^fg-tasks\/\d+-/.test(f)).map(f => ({ path: f, fm: { id: f.slice(9, 12), title: /title: (.*)/.exec(files[f])[1], status: /status: (.*)/.exec(files[f])[1] } }));
+        expect((await W.transitionTask(T4, 'in-progress')).transitioned).toBe(true);
+        delete files['search.js'];
+        const first = await W.transitionTask(T4, 'done');
+        expect(first.transitioned).toBe(false);
+        expect(first.reason).toMatch(/search \(search\.js; task #001/);
+    });
+
     it('names a command of a command-line tool that the task dropped', async () => {
         const T2 = 'fg-tasks/002-json-report.md', T3 = 'fg-tasks/003-argument-errors.md';
         const tool = (cmds) => cmds.map((c, i) => `    ${i ? 'elif' : 'if'} ${['command', 'mode', 'sys.argv[1]'][i % 3]} == "${c}":\n        pass`).join('\n') + (cmds.length ? '\nsub.add_parser("' + cmds[0] + '")' : '');

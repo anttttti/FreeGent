@@ -152,10 +152,11 @@ export function createWorkspaceFs(sent: Record<string, WorkspaceFileData>, Buffe
             if (get(p) !== undefined || skipped(p) !== null) throw fsError('EEXIST', 'mkdir', p);   // a file left out of the copy is still a file (explorations W004)
             if (isDir(p)) { if (recursive) return undefined; throw fsError('EEXIST', 'mkdir', p); }
             const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
-            if (!recursive) { if (!isDir(parent)) throw fsError('ENOENT', 'mkdir', p); dirs.add(abs); return undefined; }
+            if (!recursive) { if (!isDir(parent)) throw fsError(get(parent) !== undefined || skipped(parent) !== null ? 'ENOTDIR' : 'ENOENT', 'mkdir', p); dirs.add(abs); return undefined; }   // a file as the parent is ENOTDIR (fa91204#12)
             let first = abs;
-            for (let d = parent; d && !isDir(d); d = d.slice(0, d.lastIndexOf('/')) || '/') { if (get(d) !== undefined || skipped(d) !== null) throw fsError('ENOTDIR', 'mkdir', p); first = d; }
-            dirs.add(abs);
+            const made: string[] = [abs];   // every directory made, so removing the leaf leaves its parents
+            for (let d = parent; d && !isDir(d); d = d.slice(0, d.lastIndexOf('/')) || '/') { if (get(d) !== undefined || skipped(d) !== null) throw fsError('ENOTDIR', 'mkdir', p); first = d; made.push(d); }
+            for (const d of made) dirs.add(d);
             return first;
         },
         unlinkSync(p: string) {

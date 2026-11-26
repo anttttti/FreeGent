@@ -186,6 +186,9 @@ function _ensureFrame(): Promise<void> {
     return ready;
 }
 
+// Whether the running frame was made under a different network policy than the current privacy level asks for.
+export function sandboxPolicyStale(): boolean { return !!ready && sandboxCspMeta() !== _frameCsp; }
+
 export function sandboxBusy(): boolean { return !!boot || pending.size > 0; }
 
 // Tear the frame down (stuck code, or a fresh start). Pending calls fail; the next call reloads it.

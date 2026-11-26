@@ -205,8 +205,9 @@ function profileApply(settings) {
     const prior: Record<string, string | null> = {};
     for (const k of Object.keys(patch)) { try { prior[k] = localStorage.getItem(k); } catch { prior[k] = null; } }
     if (!patchPrefs(patch)) {
-        patchPrefs(prior);
-        try { alert('The profile could not be applied: the browser refused to store some of its settings (storage full or blocked). Nothing was changed.'); } catch {}
+        // Undone in reverse order (a shorter value written first can have freed the room a later one grew into), and said if it did not all go back.
+        const undone = patchPrefs(Object.fromEntries(Object.entries(prior).reverse()));
+        try { alert(`The profile could not be applied: the browser refused to store some of its settings (storage full or blocked). ${undone ? 'Nothing was changed.' : 'Some settings could not be put back either: check them in Settings.'}`); } catch {}
         if (typeof populateSettingsForm === 'function') populateSettingsForm();
         return;
     }
@@ -260,8 +261,8 @@ function profileUpload() {
         if (!file) return;
         try {
             const data     = JSON.parse(await file.text());
-            const name     = data.name || file.name.replace(/\.json$/, '');
-            const raw      = data.settings || data;
+            const name     = data?.name || file.name.replace(/\.json$/, '');
+            const raw      = data && typeof data === 'object' && 'settings' in data ? data.settings : data;   // a present `settings` is validated as it is: null or 0 fell back to the wrapper (fbec64e#5)
             // A list or a primitive as the settings broke the profile list, and an empty list applied as "reset every setting" (codex R141).
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('the file holds no settings object');
             const settings = credentialFreeSettings(raw);
@@ -340,7 +341,7 @@ function _makeProfileCard(uid, name, description, settings, isBuiltin, savedAt) 
 
     const descLine = document.createElement('div');
     descLine.style.cssText = 'font-size:12px;color:var(--muted);margin-top:2px';
-    descLine.textContent = description + (savedAt ? ' · ' + savedAt.slice(0, 10) : '');
+    descLine.textContent = description + (savedAt ? ' · ' + String(savedAt).slice(0, 10) : '');
 
     infoDiv.append(topLine, descLine);
 

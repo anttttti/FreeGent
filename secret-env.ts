@@ -27,6 +27,7 @@ function isSecretEnvName(name: string): boolean {
 // above; Bundler's host-specific variables (BUNDLE_GEMS__EXAMPLE__COM="user:password", the host's dots written as "__") by their shape here.
 // Bundler's other double-underscore settings (BUNDLE_BUILD__NOKOGIRI="--use-system-libraries") hold no "user:secret" and are kept.
 function isBundlerCredential(name: string, value: string): boolean {
+    if (/^BUNDLE_(?:BUILD|LOCAL)__/i.test(name)) return false;   // build flags and local-path overrides: a value with a colon there is a path list, not a login (fbec64e#6)
     return /^BUNDLE_[A-Z0-9_]*[A-Z0-9]__[A-Z0-9]/i.test(name) && /^[^\s:]+:\S+$/.test(value);
 }
 

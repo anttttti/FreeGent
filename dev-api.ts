@@ -358,7 +358,7 @@ async function _publicGetHops(
         const status = res.statusCode ?? 502;
         const loc = res.headers.location;
         if ([301, 302, 303, 307, 308].includes(status) && loc) {
-            res.resume();
+            res.destroy();   // its body is not wanted: a redirect that keeps sending must not outlive the hop (fa91204#7)
             const next = new URL(loc, cur);
             if (keyUsed && next.origin !== cur.origin)
                 throw new ProxyRefusal('redirect to another origin refused: the request carries a server key');
@@ -474,7 +474,7 @@ async function _refuseLinkLocal(rawUrl: string): Promise<void> {
 // Without a server key a cross-origin redirect was followed as is (codex R229): a 307/308 carried the request body (a prompt) and the user's own
 // Authorization header to the new origin, past FG_PROXY_POST_ALLOW, which was checked on the first URL only. Now a cross-origin hop never
 // carries a body or credential headers, and `hopRefusal` (the allow-list) is checked on every hop.
-const _CREDENTIAL_HEADERS = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|x-goog-api-key)$/i;
+const _CREDENTIAL_HEADERS = /^(?:authorization|proxy-authorization|cookie)$|api[-_]?key|token|secret|auth|subscription/i;   // by name, not a list: Brave's X-Subscription-Token was missing from it (e653578#1)
 export async function guardedFetch(
     url: string, init: RequestInit & { method: string }, serverPort: number,
     keyUsed: boolean, fetchImpl: typeof fetch = fetch, hopRefusal: (url: string) => string | null = () => null,
@@ -1177,7 +1177,7 @@ window.fetch=function(input,init){
       return orig(input,Object.assign({},init,{headers:h0}));}
     var h,body;
     // fetch(new Request(...)) with a placeholder went out as is (codex R204): read the Request's URL, headers and body like init's.
-    if(isReq){var rq=new Request(input,init);h=hdrs(rq.headers);
+    if(isReq){var rq=new Request(input.clone(),init);h=hdrs(rq.headers);   /* a clone: constructing from the Request itself used up its body, and the untouched call then failed */
       if(!hasPH(rq.url,h,null))return orig(input,init);
       body=rq.method==='GET'||rq.method==='HEAD'?null:rq.body;init={method:rq.method,signal:rq.signal};}
     else{h=hdrs(init.headers);body=init.body;if(!hasPH(u.href,h,body))return orig(input,init);}

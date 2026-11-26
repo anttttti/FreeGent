@@ -189,7 +189,8 @@ const _TRUNCATION_RE = [
     // Inline-comment markers: "// ..." / "# ..."  followed by rest/existing/same/etc.
     /(\/\/|#)\s*\.{3}\s*(rest|existing|previous|same|more|etc\.?)/i,
     // Inline-comment "rest of file/code/…"
-    /(\/\/|#)\s*(rest|remaining)\s+(of\s+)?(the\s+)?(file|code|content|implementation|functions?|methods?|imports)/i,
+    // The marker is the whole comment ("// rest of the file", "# remaining imports here"); a sentence that starts that way is an ordinary comment.
+    /(\/\/|#)\s*(rest|remaining)\s+(of\s+)?(the\s+)?(file|code|content|implementation|functions?|methods?|imports)(?:\s+(?:here|as\s+(?:before|above)|unchanged|omitted|goes\s+here|(?:stay|remain)s?\s+the\s+same))?\s*(?:\.{2,}|…)?\s*(?:$|\*\/)/im,
     // An ellipsis comment with the marker in parentheses: "// ... (rest of imports)" (self-analysis P2 2026-10-29, through replace_in_file)
     /(\/\/|#)\s*\.{3}\s*\(\s*(rest|remainder|remaining|other|existing|unchanged)\b[^)]*\)/i,
     // Bracket markers: [...existing code...], [rest of file], [same as before], etc.
@@ -228,6 +229,8 @@ function _decodeEscapedArg(text: string, mode: 'full' | 'backslash' | 'quote'): 
 // Abbreviated-history write_file refusals per path in this chat (see _historyLookalike); reset with the
 // replace-failure state on a new chat.
 const _lookalikeRefusals = new Map<string, number>();
+// The size shrinkNote reports is in bytes: a string's length undercounts UTF-8 text.
+const _utf8Len = (s: string): number => { let n = 0; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c >= 0xd800 && c < 0xdc00 ? (i++, 4) : 3; } return n; };
 export function resetLookalikeRefusals(): void { _lookalikeRefusals.clear(); _shrinkRefused.clear(); }   // called at the start of every turn
 
 
@@ -519,7 +522,9 @@ function _ivCheck(name, args): { level: string; reason: string; quiet?: boolean 
     // A request about the detector itself (its patterns, their tests) needs the phrases as data in the files it changes and the code it
     // runs, though it seldom quotes them all (self-analysis P3 2026-10-29: "positive cases for each remaining pattern" was blocked on
     // every write, and the agent tried base64 to get round it). Never for a call that reaches outside the workspace.
-    const aboutDetector = _IV_DETECTOR_TASK_RE.test(request) && _IV_LOCAL_TOOLS.has(name);
+    // Code that can open a connection is not exempt: the phrase it carries could be sent out or fetched from outside the workspace.
+    const _netCode = name === 'execute_code' && /\b(?:fetch|XMLHttpRequest|WebSocket|curl|wget|nc|ncat|ssh|scp|requests|urllib|http\.client|httpx|aiohttp|socket|net\.connect|https?:\/\/)/i.test(String(args?.code ?? ''));
+    const aboutDetector = _IV_DETECTOR_TASK_RE.test(request) && _IV_LOCAL_TOOLS.has(name) && !_netCode;
     for (const pat of _IV_INJECTION_PATTERNS) {
         const m = pat.exec(argsStr);
         if (!m || pat.test(request) || aboutDetector) continue;
@@ -1064,11 +1069,12 @@ async function _handleAcademicSearch(args: any) {
     if (src === 'pubmed') {
         try {
             const q        = encodeURIComponent(args.query || '');
-            const searchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${q}&retmode=json&retmax=${n}`, { signal: _searchSignal() });
+            const _sig = _searchSignal();   // one deadline for both requests
+            const searchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${q}&retmode=json&retmax=${n}`, { signal: _sig });
             if (!searchResp.ok) return { error: `PubMed HTTP ${searchResp.status}` };
             const ids = (await searchResp.json()).esearchresult?.idlist || [];
             if (!ids.length) return { results: [] };
-            const fetchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`, { signal: _searchSignal() });
+            const fetchResp = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`, { signal: _sig });
             if (!fetchResp.ok) return { error: `PubMed fetch HTTP ${fetchResp.status}` };
             const doc = new DOMParser().parseFromString(await fetchResp.text(), 'application/xml');
             if (doc.getElementsByTagName('parsererror').length || !/^PubmedArticleSet$/i.test(doc.documentElement?.localName ?? ''))
@@ -2125,7 +2131,7 @@ async function _handleReplaceInFile(args, context) {
                         .slice(0, 3);
                     if (scored.length > 0) {
                         hint = '\nClosest matches in file (adjust old_string to one of these):\n' +
-                            scored.map(x => `  L${x.i + 1}: ${x.l}`).join('\n');
+                            scored.map(x => `  L${x.i + 1}: ${x.l.length > 300 ? x.l.slice(0, 300) + ' […]' : x.l}`).join('\n');   // a minified line is not echoed whole
                     }
                 }
             }
@@ -2348,7 +2354,7 @@ async function _handleWebSearch(args) {
             const resp = await fetch(proxy ? `${proxy}?url=${encodeURIComponent(url)}` : url, { signal: _searchSignal() });
             if (resp.status === 429) return { error: 'GDELT allows one request per 5 seconds — wait a few seconds and retry once, or use another source.' };
             if (!resp.ok) return { error: `GDELT HTTP ${resp.status}` };
-            const data = await resp.json().catch(() => null);
+            const data = await resp.json().catch(e => { if (e?.name === 'AbortError' || e?.name === 'TimeoutError') throw e; return null; });   // a stalled body is a timeout, not a non-JSON reply
             if (!data) return { error: 'GDELT returned a non-JSON reply (usually a rate-limit or no-match message) — retry once or use another source.' };
             const _an = annotateUrl;
             return { results: (data.articles || []).map(a => `\n1. [${a.title}] — ${_an(a.url)}\n   ${a.seendate}`).join('') };
@@ -3044,7 +3050,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
             const written_ok = Object.keys(run.written).filter(p => !write_errors.some(e => e.startsWith(p + ':')));
             const extra_stderr = write_errors.length ? (run.stderr ? '\n' : '') + write_errors.map(e => `[write failed] ${e}`).join('\n') : '';
             const deleted = deletedOk;
-            const _len = (v: any) => v == null ? null : typeof v === 'string' ? v.length : typeof v?.base64 === 'string' ? Math.floor(v.base64.length * 3 / 4) : (v?.length ?? null);
+            const _len = (v: any) => v == null ? null : typeof v === 'string' ? _utf8Len(v) : typeof v?.base64 === 'string' ? Math.floor(v.base64.length * 3 / 4) : (v?.length ?? null);
             const shrunk = shrinkNote(written_ok.map(p => ({ path: p, before: _len(files[p]), after: _len((run.written as any)[p]) ?? 0 })), !!run.exit_code);
             return { stdout: run.stdout, stderr: run.stderr + extra_stderr, exit_code: run.exit_code || (write_errors.length && !written_ok.length ? 1 : 0), ...(written_ok.length ? { files_written: written_ok } : {}), ...(deleted.length ? { files_deleted: deleted } : {}), ...(write_errors.length ? { write_errors } : {}), ...(shrunk ? { note: shrunk } : {}) };
         })();
@@ -3126,7 +3132,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
                         writtenPaths.push(path);
                     }
                     // Strip file contents — they're in the workspace now; history only needs the paths
-                    const _len = (v: any) => typeof v !== 'string' ? null : v.startsWith('\x00BIN\x00') ? Math.floor((v.length - 5) * 3 / 4) : v.length;
+                    const _len = (v: any) => typeof v !== 'string' ? null : v.startsWith('\x00BIN\x00') ? Math.floor((v.length - 5) * 3 / 4) : _utf8Len(v);
                     const shrunk = shrinkNote(writtenPaths.map(p => ({ path: p, before: _len(files[p]), after: _len((execResult.files_written as any)[p]) ?? 0 })), !!execResult.exit_code);
                     execResult = { ...execResult, files_written: writtenPaths, ...(shrunk ? { note: execResult.note ? `${execResult.note} ${shrunk}` : shrunk } : {}) };
                 }
@@ -3181,7 +3187,7 @@ async function _handleExecuteCodeInner(args, context, onProgress?: (message:stri
     // its last command, so an earlier failure can hide behind it. Annotate; never strip or replace
     // output — stderr also carries legitimate output (gcc -v, progress, warnings).
     if (execResult && !execResult.error && !(execResult.exit_code > 0) && _STDERR_ERROR_RE.test(execResult.stderr ?? ''))
-        execResult = { ...execResult, note: 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.' };
+        { const n = 'Exit code 0, but stderr contains errors. An earlier command may have failed; the exit code only reflects the last one.'; execResult = { ...execResult, note: execResult.note ? `${execResult.note} ${n}` : n }; }   // appended: it must not hide a shrink warning
     // Experiment syntax_watch: the files the run changed are parse-checked while they are on disk (a worker's run included).
     if (runtime.hasNativeExec && runtime.experiment('syntax_watch')) execResult = await _watchExecSyntax(execResult);
     // Experiment edit_assist: file lines printed by the run (cat, sed -n, grep) count as shown to the model.

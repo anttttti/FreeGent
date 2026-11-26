@@ -3136,7 +3136,7 @@ function uploadFiles(folder = false, asLocal = false, deviceAttach = false) {
                     + `In Files, long-press the folder and choose Download Now (Finder: Download Now), then import again.${list ? '\n\n' + list : ''}`);
             }
             if (tooLarge.length) parts.push(`${tooLarge.length} file${tooLarge.length === 1 ? ' was' : 's were'} not imported because ${tooLarge.length === 1 ? 'it is' : 'they are'} larger than ${UPLOAD_MAX_BYTES / 1024 / 1024} MB:\n${_list(tooLarge)}`);
-            if (overCap) parts.push(`Only the first ${UPLOAD_MAX_FILES} files were imported; ${overCap} more ${overCap === 1 ? 'was' : 'were'} left out. Import a smaller folder to get the rest.`);
+            if (overCap) parts.push(`Only the first ${UPLOAD_MAX_FILES} files were selected for import (any that could not be read are named above); ${overCap} more ${overCap === 1 ? 'was' : 'were'} left out. Import a smaller folder to get the rest.`);
             if (parts.length) alert(parts.join('\n\n'));
         };
         if (toImport.length === 0) {

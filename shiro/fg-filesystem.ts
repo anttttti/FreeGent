@@ -101,7 +101,8 @@ export class FWFileSystem extends FileSystem {
         let meta = this.metadata.get(path);
         if (!meta) {
             const now = Date.now();
-            meta = {mode:type === 'dir' ? 0o755 : 0o644, atime:now, mtime:now, ctime:now, source};
+            meta = {mode:type === 'dir' || path.includes('/node_modules/.bin/') ? 0o755 : 0o644,   // modes last for the session: an installed bin stub is a command again after a reload
+                     atime:now, mtime:now, ctime:now, source};
             this.metadata.set(path,meta);
         } else if (source !== undefined && source !== meta.source) {
             meta.source = source; meta.mtime = Date.now(); meta.ctime = meta.mtime;
@@ -359,9 +360,9 @@ export class FWFileSystem extends FileSystem {
                 for (const [from, to] of moves) {
                     const old = {...this.metadata.get(from)!};
                     await this.writeFile(to, await this.readFile(from));
+                    copied.push(to);   // listed at once: a failing stat below still rolls this copy back
                     await this.stat(to);
                     this.metadata.set(to, {...old, source:this.metadata.get(to)!.source, ctime:Date.now()});
-                    copied.push(to);
                 }
             } catch (e) {
                 for (const to of copied) { try { await this.unlink(to); } catch { /* best effort */ } }

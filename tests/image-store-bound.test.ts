@@ -16,4 +16,10 @@ describe('inline image store', () => {
         W.rememberImage('img_8', big);
         expect(Object.keys(W._pyodideImageStore)).toContain('img_4');
     });
+    it('an image larger than the whole store is not kept and evicts nothing (fa91204#13)', () => {
+        W.rememberImage('small', 'data:image/png;base64,AAAA');
+        W.rememberImage('huge', 'data:image/png;base64,' + 'A'.repeat(49_000_000));
+        expect(Object.keys(W._pyodideImageStore)).toContain('small');
+        expect(Object.keys(W._pyodideImageStore)).not.toContain('huge');
+    });
 });

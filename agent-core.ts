@@ -3,7 +3,7 @@
 import { getChatHistory, chatHistoryLength, setChatHistory, appendChatMessage, dropTrailingUserMessage } from './chat-history.js';
 import { beginPreparation, endPreparation, cancelPreparation, currentPreparation, preparing, type Preparation } from './turn-owner.js';
 import { type AgentSession, defaultSession, workflowMode, activeChatId, mainAgentRole, softStopPending, _lastTurnDoneToken, _lastTurnBlockedToken, aiJob, setAiJob, aiBusy } from './state.js';
-import { syncGuidanceMemory } from './skill-guidance.js';
+import { syncGuidanceMemory, _skillUnavailable } from './skill-guidance.js';
 import { type Lease } from './lease.js';
 import { GOAL_PATH, startGoal, resumeGoal, stopGoal, steerGoal, loadGoal, clearGoal, goalRunning, describeGoal, parseGoalCommand, type GoalHost, type GoalRecord } from './goal.js';
 import { workspaceEpoch } from './exec-limits.js';
@@ -17,7 +17,7 @@ import { setMainAgentRole } from './workers.js';
 import { sandboxBusy } from './exec-sandbox-host.js';
 import { runtime } from './runtime.js';
 import { _stripTerminal } from './turn-protocol.js';
-import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider, getContextThreshold } from './config.js';
+import { getActiveMainModelList, getMainModelList, specHasKey, specBlockedByPrivacy, getProvider, getContextThreshold, pythonRunBusy } from './config.js';
 import { getPrivacyLevel } from './privacy.js';
 import { canOfferGuestQuota, offerGuestQuota } from './guest-quota.js';
 import { acquireChatLease, releaseChatLease, chatLeaseHolderAlive } from './chat-lease.js';
@@ -1610,7 +1610,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
         wsPaths:  await collectWorkspacePaths(),
         msgMedia: _msgMedia,
     });
-    if (_slashSkill) currentTurnSkills.add(_slashSkill);
+    if (_slashSkill && !_skillUnavailable(skillsRegistry.get(_slashSkill))) currentTurnSkills.add(_slashSkill);   // `/deep-research` with deep_research off must not inject instructions to call it (8ef99f2#2)
     await _saveCheckpointSnapshot(ckptId);
 
     // History is always in OAI format — no conversion needed when switching providers.
@@ -1792,7 +1792,7 @@ function stopAfterStep(): void {
     if (aiJob === 'goal') stopGoal('stopped by you');
     setSoftStopPending(true);
     // A partial stop finishes the active tool. Stop-now still aborts it immediately.
-    if (!sandboxBusy() && !runtime.nativeBusy) activeAbortController?.abort();
+    if (!sandboxBusy() && !runtime.nativeBusy && !pythonRunBusy()) activeAbortController?.abort();
 }
 
 let _stopSeq = 0;   // counts Stop presses: lets a turn that is still being prepared notice one

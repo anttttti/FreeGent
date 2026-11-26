@@ -46,6 +46,7 @@ function readArchive(buf: Uint8Array): Entry[] {
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new Error('End-of-central-directory signature not found');
   const count = dv.getUint16(eocd + 10, true);
+  if (count === 0 && dv.getUint32(eocd + 12, true) > 0) throw new Error('central directory size and entry count disagree');   // read as empty, a rewrite would drop its members
   let p = dv.getUint32(eocd + 16, true);
   const out: Entry[] = [];
   for (let k = 0; k < count; k++) {
@@ -218,6 +219,7 @@ export const zipCmd: Command = {
     if (todo.length === 0 && !existed) { ctx.stderr += `\nzip error: Nothing to do! (${archiveName})\n`; return 12; }
 
     let changed = false;
+    const byName = new Map<string, string>();
     const written = new Set<string>();   // what this run put into the archive: -m removes only those (codex R294)
     for (const f of todo) {
       const idx = entries.findIndex(e => e.name === f.name);
@@ -245,7 +247,8 @@ export const zipCmd: Command = {
         say(`${idx >= 0 ? 'updating' : '  adding'}: ${f.name} (${method === 8 ? 'deflated' : 'stored'} ${method === 8 ? pct : 0}%)`);
       }
       if (idx >= 0) entries[idx] = entry; else entries.push(entry);
-      written.add(f.path);
+      const prev = byName.get(f.name); if (prev) written.delete(prev);   // two sources with one member name: only the one that stayed in the archive is removed by -m
+      byName.set(f.name, f.path); written.add(f.path);
       changed = true;
     }
     if (!changed) {

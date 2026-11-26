@@ -33,7 +33,7 @@ beforeAll(async () => {
     sh = await getShell();
     W.fetch = vi.fn(async (url: string) => {
         const u = String(url);
-        if (u.endsWith('.tgz')) return new Response(u, { status: 200 });
+        if (u.endsWith('.tgz')) { await W.__onTgz?.(u); return new Response(u, { status: 200 }); }
         const name = decodeURIComponent(u.replace(/^.*registry\.npmjs\.org\//, ''));
         return registry[name] ? new Response(JSON.stringify(registry[name]), { status: 200 }) : new Response('not found', { status: 404, statusText: 'Not Found' });
     });
@@ -77,5 +77,25 @@ describe('npm install', () => {
         await run('npm install ver-r276@1.0.0');
         expect((await run('npx ver-r276')).out).toContain('v1');
         expect((await run('npx ver-r276@2.0.0')).out).toContain('v2');
+    });
+    it('a manifest edited during the downloads keeps its edit, and this install adds only its own entry (09a4170#1)', async () => {
+        pkgMeta('slow-r1', { '1.0.0': { script: "console.log(1)" } });
+        files.set('package.json', { content: JSON.stringify({ name: 'p', dependencies: {} }), encoding: null });
+        W.__onTgz = async () => { files.set('package.json', { content: JSON.stringify({ name: 'p', dependencies: { other: '1.0.0' } }), encoding: null }); };
+        const r = await run('npm install slow-r1'); W.__onTgz = undefined;
+        expect(r.code).toBe(0);
+        const m = JSON.parse(files.get('package.json')!.content);
+        expect(m.dependencies.other).toBe('1.0.0'); expect(m.dependencies['slow-r1']).toBeTruthy();
+    });
+    it('a bin stub naming a .cjs script runs it (09a4170#8)', async () => {
+        files.set('node_modules/x-r8/run.cjs', { content: "console.log('cjs ran')", encoding: null });
+        files.set('node_modules/.bin/x8', { content: '/workspace/node_modules/x-r8/run.cjs', encoding: null });
+        expect((await run('node_modules/.bin/x8')).out).toContain('cjs ran');
+    });
+    it('npx pkg@latest does not reuse an installed copy (09a4170#3)', async () => {
+        pkgMeta('tag-r3', { '1.0.0': { bin: { tag: './cli.js' }, script: "console.log('t1')" } });
+        await run('npm install tag-r3@1.0.0');
+        pkgMeta('tag-r3', { '1.0.0': { bin: { tag: './cli.js' }, script: "console.log('t1')" }, '2.0.0': { bin: { tag: './cli.js' }, script: "console.log('t2')" } });
+        expect((await run('npx tag-r3@latest')).out).toContain('Resolved');   // asked the registry (its answer is cached in this test)
     });
 });

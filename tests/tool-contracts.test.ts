@@ -254,6 +254,10 @@ describe('replace_in_file', () => {
         expect(await stored('m.ts')).toBe("import { a } from './a.js';\nimport { b } from './b.js';\n");
         const ok = await tool('replace_in_file', { path: 'm.ts', old_string: "import { b } from './b.js';", new_string: "import { b } from './b.js';   // the rest of the module uses b (see below)" });
         expect(ok.success).toBe(true);
+        const sentence = await tool('replace_in_file', { path: 'm.ts', old_string: "import { b } from './b.js';", new_string: "import { b } from './b.js';\n// Remaining imports are type-only" });   // 25c933d#8
+        expect(sentence.success).toBe(true);
+        const marker = await tool('replace_in_file', { path: 'm.ts', old_string: "import { b } from './b.js';", new_string: "import { b } from './b.js';\n// rest of the imports here" });
+        expect(marker.error).toMatch(/Truncation placeholder/);
     });
 
     // Self-analysis P1 2026-10-29: end_line 2520 alone echoed the whole file (99k characters) and the next request did not fit the window.

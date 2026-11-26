@@ -1,6 +1,7 @@
 // Self-analysis 2026-10-29 P6: Python's open(path, 'w') then a failing write() left model-caps.ts at 0 bytes, and the result said only
 // files_written; P2 cut 590 lines out of tools.ts. A written file that is now empty or much smaller is named in the result.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeExec } from '../native-exec.ts';
@@ -35,6 +36,15 @@ describe('native execute_code', () => {
         expect(r.exit_code).not.toBe(0);
         expect(r.files_written).toContain('model-caps.ts');
         expect(r.note).toMatch(/model-caps\.ts is now EMPTY \(it was 18,000 bytes\)/);
+    });
+
+    it('reports a clean tracked file that a script emptied, from its committed size (25c933d#1)', async () => {
+        const git = (...a: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { stdio: 'ignore' });
+        writeFileSync(join(dir, 'tracked.ts'), 'export const x = 1;\n'.repeat(900));
+        git('init', '-q'); git('add', '.'); git('commit', '-q', '-m', 'x');
+        const run = createNativeExec({ workspaceRoot: dir });
+        const r = await run('python', "open('tracked.ts', 'w').write('')\n");
+        expect(r.note).toMatch(/tracked\.ts is now EMPTY \(it was 18,000 bytes\)/);
     });
 
     it('says nothing for a script that rewrites a file at a similar size', async () => {

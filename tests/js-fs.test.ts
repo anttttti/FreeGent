@@ -123,7 +123,7 @@ describe('codex R193: changes are reported against the files the run was given',
 describe('mkdirSync follows Node', async () => {
     const nodeFs = await import('node:fs'), { mkdtempSync } = nodeFs, { join } = await import('node:path'), { tmpdir } = await import('node:os');
     const outcome = (f: () => any) => { try { const r = f(); return r === undefined ? 'undefined' : 'path'; } catch (e: any) { return e.code; } };
-    const steps: [string, any][] = [['a', undefined], ['a', undefined], ['b/c', undefined], ['b/c', { recursive: true }], ['b/c', { recursive: true }], ['b', { recursive: true }], ['f.txt', undefined], ['f.txt/x', { recursive: true }]];
+    const steps: [string, any][] = [['a', undefined], ['a', undefined], ['b/c', undefined], ['b/c', { recursive: true }], ['b/c', { recursive: true }], ['b', { recursive: true }], ['f.txt', undefined], ['f.txt/x', { recursive: true }], ['f.txt/y', undefined]];
     it('gives the same result as node:fs for each step of one sequence', () => {
         const real = mkdtempSync(join(tmpdir(), 'fg-mkdir-'));
         nodeFs.writeFileSync(join(real, 'f.txt'), 'x');

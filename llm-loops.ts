@@ -129,6 +129,7 @@ function _mirrorCompactionToSession(
                     { turn: 0, step: 0, message: {
                         role: 'assistant', content: _cm.content ?? null,
                         ...(_cm.tool_calls?.length ? { tool_calls: _cm.tool_calls } : {}),
+                        ...(typeof _cm.reasoning_content === 'string' && _cm.reasoning_content ? { reasoning_content: _cm.reasoning_content } : {}),   // a model that needs it back gets the kept tail's reasoning, not stand-ins (73429d9#1)
                     } },
                     { surfaceOp: 'append' });
             } else if (_cm.role === 'tool') {
@@ -225,6 +226,7 @@ export function clearReplaceState(session?: import('./state.ts').AgentSession): 
     const _s = session ?? defaultSession;
     _s._replaceFailures  = new Map();
     _s._replaceNudgeSent = new Map();
+    _lastLoggedPrompt.clear();   // a rewind can prune the log entry that held the system prompt: the next step logs it again (16bd92f#11)
     resetLookalikeRefusals();
     resetSecrets();   // values read from a credential file in an earlier chat must not block this one's calls (review 2026-11-11 F02)
     (globalThis as any).resetWorkerBudget?.();
@@ -1962,8 +1964,11 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }
             }
             if (_is429 || _isErr) {
+                // Recovery keeps the turn's tool format, as the inner retry handler does: a fn-tag model's history is not what an OpenAI-format one expects (fa91204#8).
+                const _fmtOf = (p: any, m: any) => { try { return getModelToolFormat(p, m); } catch { return 'openai'; } };
+                const _sameFmt = (spec: string | null | undefined) => { const b = String(spec ?? '').indexOf('|'); return b < 0 || _fmtOf(String(spec).slice(0, b), String(spec).slice(b + 1)) === _fmtOf(_oEp.provider, _oEp.model); };
                 const fb = _sessionFallback ?? getRateLimitFallbackEndpoint();
-                if (fb && fb.model !== _oEp.model) {
+                if (fb && fb.model !== _oEp.model && _sameFmt(`${fb.provider}|${fb.model}`)) {
                     activeEndpoint = fb; _sessionFallback = fb;
                     thinkTask.setModel(modelFriendlyName(`${fb.provider}|${fb.model}`));
                     thinkTask.append(`\n[${_epKey}][switching to ${fb.provider}|${fb.model}]\n`, 'error');
@@ -1971,7 +1976,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 }
                 const curKey = `${_oEp.provider ?? getProvider()}|${_oEp.model}`;
                 const next = _anyFreeSpec(curKey);
-                if (next) {
+                if (next && _sameFmt(next)) {
                     activeEndpoint = specToEndpoint(next); _sessionFallback = activeEndpoint;
                     thinkTask.setModel(modelFriendlyName(next));
                     thinkTask.append(`\n[${curKey}][${_is429 ? 'rate limited' : 'server error'}: rotating to ${next}]\n`, 'error');
@@ -1984,7 +1989,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                     thinkTask.append(`\n[${curKey}][all endpoints cooling — waiting ${fmtDelay(_waitMs)}]\n`, 'error');
                     await sleepInterruptible(_waitMs);
                     const recovered = _anyFreeSpec(curKey);
-                    if (recovered) { activeEndpoint = specToEndpoint(recovered); _sessionFallback = activeEndpoint; }
+                    if (recovered && _sameFmt(recovered)) { activeEndpoint = specToEndpoint(recovered); _sessionFallback = activeEndpoint; }
                     thinkTask.abort(); continue;
                 }
             }

@@ -539,6 +539,7 @@ async function extractOldFormat(content: string, ctx: any, workingDir: string, v
   const lines = content.split('\n');
   let i = 1;
   const extracted: string[] = [];
+  let rejected = false;   // a refused member is a failed extraction: the exit status says so (e93fcb9#12)
   while (i < lines.length) {
     if (!lines[i].startsWith('FILE:')) break;
     const filePath = lines[i].slice(5);
@@ -552,7 +553,7 @@ async function extractOldFormat(content: string, ctx: any, workingDir: string, v
     const fileContent = contentLines.join('\n');
     i++; // Skip DATA-END
     const safePath = memberPath(filePath);
-    if (safePath === null) { ctx.stderr += `tar: ${filePath}: Member name contains '..'\n`; continue; }
+    if (safePath === null) { ctx.stderr += `tar: ${filePath}: Member name contains '..'\n`; rejected = true; continue; }
     const targetPath = ctx.fs.resolvePath(safePath, workingDir);
     if (type === 'dir') {
       await ctx.fs.mkdir(targetPath, { recursive: true });
@@ -566,7 +567,7 @@ async function extractOldFormat(content: string, ctx: any, workingDir: string, v
     extracted.push(filePath);
   }
   if (verbose) ctx.stdout += extracted.join('\n') + '\n';
-  return 0;
+  return rejected ? 2 : 0;
 }
 
 function listOldFormat(content: string, ctx: any): number {

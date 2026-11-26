@@ -74,6 +74,6 @@ describe('scripts that assign location get their own', () => {
     it('recognises an assignment, not a read or a comparison', async () => {
         const { _ASSIGNS_LOCATION_RE: re } = await import('../shiro/node-compat/execution.ts');
         for (const s of ['globalThis.location = { reload() {} }', 'window.location={}', 'location = "x"', 'self . location = 1']) expect(re.test(s)).toBe(true);
-        for (const s of ['const u = location.href', 'if (window.location == x) {}', 'obj.location = 3', 'myLocation = 1', 'location === y']) expect(re.test(s)).toBe(false);
+        for (const s of ['const u = location.href', 'if (window.location == x) {}', 'obj.location = 3', 'myLocation = 1', 'location === y', 'const location = process.argv[2]', 'let  location = 1']) expect(re.test(s)).toBe(false);
     }, 30_000);   // the shell's execution module is a large import under a full-suite load
 });

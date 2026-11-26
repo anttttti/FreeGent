@@ -249,4 +249,14 @@ describe('modelFailureRun', () => {
         await withRetry(async () => { throw Object.assign(new Error('TruncatedResponse(x)'), { isTruncated: true }); }, () => false, 2, () => true).catch(() => {});
         expect(modelFailureRun().n).toBe(0);
     });
+    it('counts an AbortError the user did not make (a timeout), not a stop (16bd92f#10)', async () => {
+        const { withRetry, modelFailureRun, clearModelFailureRun } = await import('../retry.ts');
+        clearModelFailureRun();
+        let n = 0;
+        await withRetry(async () => { if (++n <= 2) throw new DOMException('timed out', 'AbortError'); return 'ok'; }, () => 0, 5);
+        expect(n).toBe(3);
+        clearModelFailureRun();
+        let seen = 0;
+        await withRetry(async () => { if (++seen <= 1) throw new DOMException('timed out', 'AbortError'); return 'ok'; }, () => { expect(modelFailureRun().n).toBe(1); return 0; }, 5);
+    });
 });

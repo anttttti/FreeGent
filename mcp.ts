@@ -227,7 +227,7 @@ async function _rpc(server: { url: string; headers?: Record<string, string> }, m
     if (resp.status === 404 && c.sessionId) throw new McpSessionExpired('MCP session expired');
     // A 404 after a good initialize, with no session id the browser can read: the server most likely issued one in a header its CORS policy
     // does not expose. Taken as an expired session, so _request() starts again through the local proxy, which sees every header (codex R263).
-    if (resp.status === 404 && !c.sessionId && !c.viaProxy && c.ready && method !== 'initialize' && _proxyUrl())
+    if (resp.status === 404 && !c.sessionId && !c.viaProxy && c.ready && method !== 'initialize' && method !== 'tools/call' && _proxyUrl())   // a tool call is never replayed on a guess: the server may have run it and answered 404 with the tool's error (e93fcb9#3)
         throw new McpSessionExpired('MCP session id not readable in the browser');
     const ct = resp.headers.get('content-type') || '';
     let msg: any = null;
@@ -490,7 +490,7 @@ async function _listTools(server: { url: string; headers?: Record<string, string
     for (let page = 0; page < _MAX_TOOL_PAGES; page++) {
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
         for (const t of r?.tools || []) {
-            if (t && typeof t.name === 'string')
+            if (t && typeof t.name === 'string' && !tools.some(x => x.name === t.name))   // overlapping pages can repeat a tool: kept once (fa91204#9)
                 tools.push({ name: t.name, description: _clean(t.description), inputSchema: _redactDeep(t.inputSchema, _secrets), annotations: t.annotations });   // the schema's descriptions and defaults reach the model too (night exploration D028)
         }
         cursor = r?.nextCursor;

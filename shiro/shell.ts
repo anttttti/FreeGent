@@ -5897,10 +5897,12 @@ export class Shell {
     // No shebang - try to detect file type
     // Check if content is just a path to another file (npm bin stubs)
     const trimmedContent = content.trim();
-    if (!trimmedContent.includes('\n') && !trimmedContent.includes(' ') &&
-        (trimmedContent.endsWith('.js') || trimmedContent.endsWith('.mjs') || trimmedContent.endsWith('.ts'))) {
+    // A stub names a script: by its extension, or (a bin without one, as many CLIs ship) by a node shebang in the target.
+    const stubExt = /\.(c|m)?js$|\.ts$/.test(trimmedContent);
+    if (!trimmedContent.includes('\n') && !trimmedContent.includes(' ') && (stubExt || trimmedContent.startsWith('/'))) {
       try {
         const targetContent = await this.fs.readFile(trimmedContent, 'utf8') as string;
+        if (!stubExt && !/^#!.*\bnode\b/.test(targetContent)) throw new Error('not a node script');
         return this.executeNodeScript(trimmedContent, targetContent, args, ctx, writeStdout, writeStderr);
       } catch (e: any) {
         // Target doesn't exist, fall through

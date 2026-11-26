@@ -84,6 +84,18 @@ export function proxiedTarget(url: string, body: unknown, pageOrigin: string): s
     return null;
 }
 
+/** Every target the local proxy could contact for this call: the query's url (a GET) and the envelope's (a POST): which one the server uses depends on the method, so both are judged (e653578#2). */
+export function proxiedTargets(url: string, body: unknown, pageOrigin: string): string[] {
+    const out: string[] = [];
+    try {
+        const u = new URL(url, pageOrigin);
+        if (u.origin !== pageOrigin || !u.pathname.endsWith('/api/proxy')) return out;
+        const q = u.searchParams.get('url'); if (q) out.push(q);
+        if (typeof body === 'string') { const j = JSON.parse(body); if (j && typeof j.url === 'string') out.push(j.url); }
+    } catch {}
+    return out;
+}
+
 /** Why `target` may not be contacted at this level, or null when it may. Non-network schemes are always fine. */
 export function privacyBlockReason(target: string, level: PrivacyLevel, ctx: PrivacyContext): string | null {
     if (level === 'routed') return null;

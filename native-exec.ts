@@ -4,7 +4,7 @@
 import { EXEC_TIMEOUT_MS, EXEC_TIMEOUT_MAX_MS, shrinkNote } from './exec-limits.js';
 import { readdirSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { scrubEnv } from './secret-env.js';
 import { snapshotMarks, changedSince } from './workspace-scan.js';
@@ -99,7 +99,10 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
                 if (written.length > 0) result.files_written = written;
                 // A written file that is now empty or lost much of its size: the marks are `mtime:size` (a clean tracked file has none, so it is not judged).
                 const note = shrinkNote(written.map(rel => {
-                    const m = preSnap.get(rel), before = m && m !== 'gone' ? Number(m.split(':').pop()) : NaN;
+                    const m = preSnap.get(rel);
+                    let before = m && m !== 'gone' ? Number(m.split(':').pop()) : NaN;
+                    // A clean tracked file has no mark: its size is the committed one.
+                    if (!Number.isFinite(before) && !m) { try { before = Number(execFileSync('git', ['-C', workspaceRoot, 'cat-file', '-s', `HEAD:${rel}`], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }).toString().trim()); } catch { before = NaN; } }
                     let after = -1; try { after = statSync(join(workspaceRoot, rel)).size; } catch {}
                     return { path: rel, before: Number.isFinite(before) && after >= 0 ? before : null, after: Math.max(after, 0) };
                 }), (result.exit_code ?? 0) !== 0);

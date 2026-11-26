@@ -176,6 +176,8 @@ describe('installPrivacyGuard', () => {
         await expect(win.fetch('https://localhost/api/proxy?url=' + encodeURIComponent('https://example.com'))).rejects.toMatchObject({ name: 'PrivacyBlockedError' });
         await expect(win.fetch('https://localhost/api/proxy', { method: 'POST', body: JSON.stringify({ url: 'https://api.groq.com/x' }) })).rejects.toMatchObject({ name: 'PrivacyBlockedError' });
         await win.fetch('https://localhost/api/proxy', { method: 'POST', body: JSON.stringify({ url: 'http://192.168.1.50:8000/v1/chat/completions' }) });
+        // e653578#2: a query url and an envelope url that differ: the guard judges both, since the server uses the one its method reads
+        await expect(win.fetch('https://localhost/api/proxy?url=' + encodeURIComponent('http://192.168.1.50:8000/x'), { method: 'POST', body: JSON.stringify({ url: 'https://api.groq.com/x' }) })).rejects.toMatchObject({ name: 'PrivacyBlockedError' });
         await win.fetch('http://localhost:11434/v1/chat/completions');
         expect(fetchSpy).toHaveBeenCalledTimes(2);
     });

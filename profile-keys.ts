@@ -19,8 +19,8 @@ export function stripModelKeys(json: string | null | undefined): string | null |
     try {
         const arr = typeof json === 'string' ? JSON.parse(json) : null;
         if (!Array.isArray(arr)) return undefined;
-        return JSON.stringify(arr.map((m: any) => {
-            if (!m || typeof m !== 'object') return m;
+        // An entry that is not a model record (a string holding a model and its key as JSON text) is dropped: it cannot be told apart from a credential carrier.
+        return JSON.stringify(arr.filter((m: any) => m && typeof m === 'object' && !Array.isArray(m)).map((m: any) => {
             const { key: _k, apiKey: _a, ...rest } = m;
             for (const f of Object.keys(rest)) if (urlCarriesCredential((rest as any)[f])) delete (rest as any)[f];   // a model's own url with a credential in it
             return rest;

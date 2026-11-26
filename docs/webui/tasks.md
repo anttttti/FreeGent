@@ -37,11 +37,12 @@ Gates check a task before it moves to Review or Done. They are set in **Settings
 | Gate | What it does |
 |---|---|
 | Acceptance criteria review | Checks each acceptance criterion against the changed files |
-| Test runner | Runs the project's tests: `npm test` when `package.json` has a real test script, otherwise each test file on its own (`test_*.mjs`/`.js`/`.py`, `*.test.js`, `*.spec.js`, `*_test.py`, also under `tests/`; JavaScript with `node`, Python with `python3`, which runs its `test_*` functions and `unittest` cases without pytest). A failing test blocks Done and names the file. Needs a code sandbox. |
-| Page check | In the browser, with the test runner on: loads the project's root `index.html` (or its only root page) as `check_page` does; an error on load blocks Done. |
+| Test runner | Runs the project's tests: `npm test` when `package.json` has a real test script, otherwise each test file on its own (`test_*.mjs`/`.js`/`.py`, `*.test.js`, `*.spec.js`, `*_test.py`, also under `tests/`; JavaScript with `node`, Python with `python3`, which runs its `test_*` functions and `unittest` cases without pytest). A failing test blocks Done and names the file. Needs a code sandbox. A suite still running after 90 seconds does not hold Done: it passes as unverified (`qa: unverified`). |
+| Page check | In the browser, with the test runner on: loads the project's root `index.html` (or its only root page) as `check_page` does; an error on load blocks Done. A page that loads without errors but shows nothing (no text, media, controls, or drawn canvas) is bounced once; the second Done is accepted as unverified. |
 
 The test runner and the page check bounce a given failure once. If the agent marks the task done again with the same failure (it may predate the task), the task moves to Done marked `qa: unverified`, and the agent is told to say so. A test tool the sandbox lacks (for example `node:test` or pytest) is not counted as a failure.
 | Regression guard | Runs the project's build, lint or typecheck command (from `WORKFLOW.md` or detected from `package.json`). Off by default. |
+| Kept features | Names identifiers (element ids, functions, classes, CLI commands) that the task removed, including by deleting a whole file, when an earlier done task mentions them. The first Done is bounced with the names; the second attempt goes through |
 
 A task that fails a gate goes back for rework. After the **rework limit** it is marked blocked instead of retried.
 

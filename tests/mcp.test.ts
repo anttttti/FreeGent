@@ -366,6 +366,26 @@ describe('dispatch through executeToolAsync', () => {
         expect(via).toContain('proxy:tools/list');
     });
 
+    it('a 404 that carries a tool call\'s own answer is not replayed through the proxy (e93fcb9#3)', async () => {
+        mockServer(standardHandler, { session: '' });
+        const s = await W.addMcpServer({ name: 'stateless', url: 'https://stateless.example.com/mcp' });
+        const name = W.mcpExposedName(s.id, 'search_places');
+        W.setMcpToolEnabled(s.id, 'search_places', true);
+        W.fetch.mockReset();
+        const calls: string[] = [];
+        W.fetch.mockImplementation(async (url: string, init: any) => {
+            const proxied = String(url).endsWith('/api/proxy');
+            let msg = JSON.parse(init.body); if (proxied) msg = JSON.parse(msg.body);
+            calls.push(`${proxied ? 'proxy' : 'direct'}:${msg.method}`);
+            if (msg.id === undefined) return new Response(null, { status: 202 });
+            if (msg.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...standardHandler(msg) }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'ran, then failed' }] } }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+        });
+        const r = await W.executeToolAsync(name, { query: 'x' });
+        expect(calls.filter(c => c.endsWith('tools/call'))).toHaveLength(1);
+        void r;
+    });
+
     it('returns isError results and disabled tools as errors', async () => {
         mockServer(standardHandler);
         const s = await W.addMcpServer({ name: 'maps', url: 'https://e.example.com/mcp' });

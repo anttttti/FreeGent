@@ -23,7 +23,7 @@ describe('folder import caps', () => {
         await vi.waitFor(() => expect(alert).toHaveBeenCalled(), { timeout: 20000 });
         const msg = alert.mock.calls.map(c => c[0]).join('\n');
         expect(msg).toMatch(/1 file was not imported because it is larger than 10 MB:\nproj\/big\.bin/);
-        expect(msg).toMatch(/Only the first 500 files were imported; 3 more were left out/);
+        expect(msg).toMatch(/Only the first 500 files were selected for import[^;]*; 3 more were left out/);
         vi.unstubAllGlobals();
     }, 30000);
 

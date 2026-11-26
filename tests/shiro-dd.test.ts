@@ -66,3 +66,11 @@ describe('dd', () => {
         expect(files.get('k.txt')!.content).toBe('keep me intact');
     });
 });
+
+describe('dd block sizes (00eb2e1#9)', () => {
+    it('count= is in input blocks: ibs=2 obs=4 count=1 copies two bytes', async () => {
+        files.set('long.txt', { content: 'abcdefgh', encoding: null });
+        await run('dd if=long.txt of=cnt.txt ibs=2 obs=4 count=1 status=none');
+        expect(files.get('cnt.txt')!.content).toBe('ab');
+    });
+});

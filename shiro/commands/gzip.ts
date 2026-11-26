@@ -45,7 +45,7 @@ export const gzipCmd: Command = {
       const input = textToBytes(ctx.stdin);
       let result: Uint8Array;
       try { result = decompressMode ? await decompress(input) : await compress(input); }
-      catch { ctx.stderr += '\ngzip: stdin: not in gzip format\n'; return 1; }
+      catch (e: any) { ctx.stderr += /expands to more than/.test(e?.message ?? '') ? `\ngzip: stdin: ${e.message}\n` : '\ngzip: stdin: not in gzip format\n'; return 1; }   // the size limit is not a format error
       if (test) return 0;
       if (decompressMode) {
         ctx.stdout = bytesToText(result);

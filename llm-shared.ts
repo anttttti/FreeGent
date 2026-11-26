@@ -334,8 +334,9 @@ export async function compactHistory(placeholder: RenderAdapter, activeEndpoint:
             if (!resp.ok) throw await _httpErrorFromResponse(resp, 'Compaction');
             // A summary the endpoint served is a success like a chat reply: without it, the next 429 there got the one-hour penalty for an
             // endpoint with "no success since its cooldown" (codex R237).
+            const parsed = await resp.json();   // a truncated body throws here: no success is recorded for it
             recordSuccess(ep);
-            return resp.json();
+            return parsed;
         }), _makeCompactRetryHandler({
             getEp: () => ep,
             setEp: (e: any) => { ep = e; fit(); task.setModel(modelFriendlyName(`${e.provider}|${e.model}`)); task.setPrompt(`Compacting… [→ ${e.provider}|${e.model}]`); },

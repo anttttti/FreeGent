@@ -224,4 +224,12 @@ describe('OpenRouter free models share one daily count', () => {
         expect(knownLimitWaitMs({ provider: 'openrouter', model: 'b/y:free' })).toBeGreaterThan(0);
         expect(knownLimitWaitMs({ provider: 'openrouter', model: 'c/paid' })).toBe(0);
     });
+    it('a free model with no rpd of its own counts toward the account, and is held when its siblings reach it (8ef99f2#3)', () => {
+        const models = [{ provider: 'openrouter', model: 'a/x:free', rpd: 2 }, { provider: 'openrouter', model: 'n/vl:free' }];
+        globalThis.getAllModels = () => models;
+        recordRequest({ provider: 'openrouter', model: 'n/vl:free' });
+        recordRequest({ provider: 'openrouter', model: 'n/vl:free' });
+        expect(knownLimitWaitMs({ provider: 'openrouter', model: 'a/x:free' })).toBeGreaterThan(0);
+        expect(knownLimitWaitMs({ provider: 'openrouter', model: 'n/vl:free' })).toBeGreaterThan(0);
+    });
 });

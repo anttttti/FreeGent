@@ -34,6 +34,12 @@ describe('profile credentials', () => {
         expect(JSON.stringify(out)).not.toMatch(/S1|S2/);
         expect(out[1].url).toBe('u');
     });
+    it('stripModelKeys drops an entry that is not a model record, as it could carry a key as text (fa91204#10)', async () => {
+        const { stripModelKeys } = await import('../profiles.ts');
+        const out = JSON.parse(stripModelKeys(JSON.stringify(['{"model":"a","key":"S3"}', { model: 'b', key: 'S4' }])) as string);
+        expect(JSON.stringify(out)).not.toMatch(/S3|S4/);
+        expect(out).toHaveLength(1);
+    });
 });
 
 

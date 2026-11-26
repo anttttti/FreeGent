@@ -100,7 +100,15 @@ function _getKnownLimits(key: string) {
             { rpm: x.rpm >= 1 ? x.rpm : null, rpd: x.rpd >= 1 ? x.rpd : null },
         ]));
     }
-    return _knownLimitsMap.get(key) ?? { rpm: null, rpd: null };
+    const own = _knownLimitsMap.get(key) ?? { rpm: null, rpd: null };
+    // A free model of an account-wide daily budget counts toward it even when its own entry lists no rpd (a catalog entry without one never
+    // counted, and kept sending after its siblings had hit the cap): it takes the largest allowance listed for the same budget.
+    if (own.rpd == null && _dayKey(key) !== key) {
+        let rpd: number | null = null;
+        for (const [k, v] of _knownLimitsMap) if (_dayKey(k) === _dayKey(key) && v.rpd != null && (rpd == null || v.rpd > rpd)) rpd = v.rpd;
+        if (rpd != null) return { rpm: own.rpm, rpd };
+    }
+    return own;
 }
 
 // Returns ms to wait before sending a request to this endpoint (0 = ok to proceed).

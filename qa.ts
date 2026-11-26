@@ -840,9 +840,12 @@ async function gate_kept_features(taskPath) {
     if (!before) return { blocks: false, outcome: 'skipped', detail: 'No record of the files at the start of this task' };
     const now = await _projectIdentifiers();
     const removed: Array<{ file: string; id: string }> = [];
+    const listed = new Set<string>(((await agentListFiles().catch(() => [])) || []).map((f: any) => f?.name).filter(Boolean));
     for (const [file, ids] of before) {
-        const cur = now.get(file);
-        if (!cur) continue;   // a removed file is the task's visible decision, and the page and test gates see what it breaks
+        let cur = now.get(file);
+        // A file that is no longer in the project took its identifiers with it (an optional search.js removed, the page still loads); one that is
+        // listed but was not scanned says nothing.
+        if (!cur) { if (listed.size && !listed.has(file)) cur = new Set<string>(); else continue; }
         for (const id of ids) if (!cur.has(id) && ![...now.values()].some(set => set.has(id))) removed.push({ file, id });
     }
     if (!removed.length) return { blocks: false };

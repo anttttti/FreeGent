@@ -118,6 +118,9 @@ describe('guardedFetch', () => {
         const g = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/doc')).mockResolvedValueOnce(new Response('ok'));
         await guardedFetch('http://192.168.1.5:8000/doc', { method: 'GET', headers: { Authorization: 'Bearer mine', Accept: 'text/html' } }, 5000, false, g);
         expect(g.mock.calls[1][1].headers).toEqual({ Accept: 'text/html' });
+        const b = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/doc')).mockResolvedValueOnce(new Response('ok'));   // e653578#1
+        await guardedFetch('https://api.search.brave.com/res/v1/web/search', { method: 'GET', headers: { 'X-Subscription-Token': 'k', Accept: 'application/json' } }, 5000, false, b);
+        expect(b.mock.calls[1][1].headers).toEqual({ Accept: 'application/json' });
         const h = vi.fn().mockResolvedValueOnce(redirect('https://elsewhere.example/doc'));
         await expect(guardedFetch('http://192.168.1.5:8000/doc', { method: 'GET' }, 5000, false, h, u => u.includes('elsewhere') ? 'not allowed' : null)).rejects.toThrow(/redirect refused: not allowed/);
     });
@@ -506,6 +509,11 @@ describe('page script', () => {
             const plain = new Request('https://example.com/x');
             await window.fetch(plain);
             expect(calls[1][0]).toBe(plain);
+            // fa91204#2: a POST Request without a placeholder reaches the native fetch with its body still readable
+            const post = new Request('https://example.com/y', { method: 'POST', body: 'payload' });
+            await window.fetch(post);
+            expect(calls[2][0]).toBe(post);
+            expect(post.bodyUsed).toBe(false);
         });
 
         it('takes a LAN token from the URL fragment and removes it', () => {

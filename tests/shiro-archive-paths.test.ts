@@ -102,6 +102,23 @@ describe('zip / unzip edge cases', () => {
         expect(r.code).toBe(3);
         expect(files.get('bad.zip')!.content).toBe('junk');
     });
+    it('zip -jm with two sources of one member name removes only the one kept (00eb2e1#1)', async () => {
+        for (const k of [...files.keys()]) files.delete(k);
+        files.set('a/report.txt', { content: 'first', encoding: null }); files.set('b/report.txt', { content: 'second', encoding: null });
+        expect((await run('zip -q -j -m bundle.zip a/report.txt b/report.txt')).code).toBe(0);
+        expect(files.has('b/report.txt')).toBe(false);
+        expect(files.has('a/report.txt')).toBe(true);
+    });
+    it('zip refuses an archive whose entry count is zero but whose directory is not (00eb2e1#3)', async () => {
+        for (const k of [...files.keys()]) files.delete(k);
+        files.set('w/x.txt', { content: 'x', encoding: null }); files.set('w/y.txt', { content: 'y', encoding: null });
+        await run('cd /workspace/w && zip -q arch.zip x.txt');
+        const f = files.get('w/arch.zip')!; const b = Buffer.from(f.content, f.encoding === 'base64' ? 'base64' : 'latin1');
+        const e = b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])); b.writeUInt16LE(0, e + 10); b.writeUInt16LE(0, e + 8);
+        files.set('w/arch.zip', { content: b.toString('base64'), encoding: 'base64' });
+        const r = await run('cd /workspace/w && zip -q arch.zip y.txt');
+        expect(r.code).toBe(3);
+    });
     it('zip -m * leaves out the archive itself and keeps it (R296)', async () => {
         for (const k of [...files.keys()]) files.delete(k);
         files.set('w/x.txt', { content: 'x', encoding: null });

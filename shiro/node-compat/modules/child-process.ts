@@ -219,7 +219,7 @@ export function createChildProcessModule(deps: ChildProcessDeps): any {
   // before then gave `{}`, an empty string or empty stdout with no word of why (autopilot exploration AE-17, 2026-10-28: a CLI's own test
   // `execSync('node cli.js')` paused a task three times). Now such a read says what happened and what works instead.
   const notFinished = (api: string, cmd: string) => Object.assign(new Error(
-    `child_process.${api}(${JSON.stringify(cmd.slice(0, 80))}) has not finished: the in-browser shell runs child commands asynchronously and ${api} `
+    `child_process.${api}(${JSON.stringify(cmd.trim().split(/\s+/)[0].slice(0, 40) + ' …')}) has not finished: the in-browser shell runs child commands asynchronously and ${api} `
     + `cannot wait for them. Write \`await ${api}(...)\` (here it returns a promise-like value), or use exec/execFile with a callback, `
     + `or import the module and call it directly instead of starting another node.`), { code: 'ERR_SYNC_CHILD_NOT_FINISHED' });
   // A placeholder whose `then` waits for `done`; any other string-keyed read before that throws `notFinished`.

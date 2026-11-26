@@ -27,6 +27,7 @@ let _imageStoreChars = 0;
 const _imageChars = (v: any): number => typeof v === 'string' ? v.length : (v?.content?.length ?? 0);
 export function rememberImage(key: string, value: string | { type: 'svg'; content: string }): void {
     if (key in _pyodideImageStore) { _imageStoreChars -= _imageChars(_pyodideImageStore[key]); delete _pyodideImageStore[key]; }   // re-inserted as the newest
+    if (_imageChars(value) > IMAGE_STORE_CHARS) return;   // larger than the whole store: not kept, and the images already held are not evicted for it (fa91204#13)
     _pyodideImageStore[key] = value;
     _imageStoreChars += _imageChars(value);
     for (const k of Object.keys(_pyodideImageStore)) {
@@ -117,6 +118,8 @@ let pyodideWorker       = null;
 let pyodideReadyPromise = null;
 export let pyodideStatus       = 'idle'; // 'idle' | 'loading' | 'ready' | 'error'
 const pyodideCallbacks  = {};
+/** A Python run is in flight: "stop after this step" lets it finish, as it does a Bash run (the worker can only be ended, which discards its output; fa91204#1). */
+export function pythonRunBusy(): boolean { return Object.keys(pyodideCallbacks).length > 0; }
 let pyodideMsgId        = 0;
 
 // ── Settings helpers ───────────────────────────────────────────────────────
@@ -291,7 +294,7 @@ export function samplingRangeError(key: string, value: string): string | null {
 }
 function _samplingNumber(key: string): number | null {
     const v = _sampling(key);
-    if (v === '' || v === null || samplingRangeError(key, v)) return null;
+    if (v === null || v.trim() === '' || samplingRangeError(key, v)) return null;
     return Number(v);
 }
 // LLM sampling temperature (0–2). Stored as string; null/empty → use provider default.

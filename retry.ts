@@ -257,8 +257,8 @@ function _retryNote(ep: any, n: number, e: any, waitMs: number): string {
 let _failRun = { n: 0, since: 0, message: '' };
 export function modelFailureRun(): { n: number; since: number; message: string } { return _failRun; }
 const _emitFailRun = () => { try { window.dispatchEvent(new CustomEvent('fg-model-failures')); } catch {} };
-function _noteFailRun(e: any): void {
-    if (e?.isTruncated || e?.name === 'AbortError') return;
+function _noteFailRun(e: any, userStop = false): void {
+    if (e?.isTruncated || (e?.name === 'AbortError' && userStop)) return;   // a stop is not a failure; an abort the user did not make is a timeout or a dropped connection
     _failRun = { n: _failRun.n + 1, since: _failRun.n ? _failRun.since : Date.now(), message: String(e?.message ?? e).slice(0, 140) };
     _emitFailRun();
 }
@@ -273,9 +273,9 @@ export async function withRetry(fn, onRetry, maxAttempts = 12, isTransientOverri
     for (let attempt = 0; ; attempt++) {
         try { const r = await fn(); clearModelFailureRun(); return r; }
         catch (e) {
-            _noteFailRun(e);
+            _noteFailRun(e, !!(softStopPending || _turnSignal?.aborted));
             // Every failed attempt is a request that ran and is in no token total: count it.
-            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: String(e?.message ?? e).slice(0, 400), attempt, ...(e?.preFlight ? { preFlight: true } : {}) }); } catch {}   // preFlight: refused locally, no request was sent (Y008)
+            try { if (typeof metricsNote === 'function') metricsNote({ type: 'request_failed', error: redactText(String(e?.message ?? e), storedCredentialValues()).slice(0, 400), attempt, ...(e?.preFlight ? { preFlight: true } : {}) }); } catch {}   // preFlight: refused locally, no request was sent (Y008)
             try { onFailure?.(e); } catch {}
             // Soft-stop is active (timeout or UI stop button): never retry — the caller will
             // see the error and return *(break)* or propagate it cleanly.
@@ -363,7 +363,9 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
         const here = _target(curKey);
         for (const candidate of list) {
             if (candidate === curKey || _target(candidate) === here) continue;
-            if (typeof getCooldownRemaining === 'function' && getCooldownRemaining(candidate) === 0) return candidate;
+            // A model whose known quota is spent is no candidate: two of them sharing an account's daily count bounced the request between them (8ef99f2#1).
+            const spent = (() => { try { return typeof knownLimitWaitMs === 'function' && typeof specToEndpoint === 'function' && knownLimitWaitMs(specToEndpoint(candidate)) > 0; } catch { return false; } })();
+            if (!spent && typeof getCooldownRemaining === 'function' && getCooldownRemaining(candidate) === 0) return candidate;
         }
         return null;
     };

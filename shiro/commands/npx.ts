@@ -81,7 +81,8 @@ export const npxCmd: Command = {
     // An explicit version runs the local copy only when it is that version: a same-named command already on PATH, or another version in
     // node_modules, ran instead of the one asked for (codex R276).
     const installed = await manifest();
-    const localOk = !version || (installed?.version && satisfiesRange(installed.version, version));
+    const isTag = !!version && !/^[~^<>=*vVxX\d]/.test(version);   // `latest`, `next`: what the registry says now, never the copy that happens to be here
+    const localOk = !version || (!isTag && installed?.version && satisfiesRange(installed.version, version));
     const localBin = ctx.fs.resolvePath('node_modules/.bin/' + binOf(installed),ctx.cwd);
     const existingBin = !localOk ? null : await ctx.fs.exists(localBin) ? localBin : version ? null : await ctx.shell.findExecutableInPath(binName);
     const child = ctx.shell.fork();

@@ -119,7 +119,7 @@ export async function braveSearch(query: any): Promise<any> {
         // may return { results: [...] } directly — support both.
         // A search with no web hits has no `web` section at all; any other reply without a list is not a search result, and is an error so
         // Auto mode tries the next provider instead of stopping at `results: undefined` (codex R224).
-        const results = data?.web?.results ?? data?.results ?? (data?.type === 'search' ? [] : undefined);
+        const results = data?.web?.results ?? data?.results ?? (data?.type === 'search' && data.web === undefined ? [] : undefined);
         if (!Array.isArray(results)) return { error: 'Brave returned a reply without a results list' };
         const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
         return { source: 'Brave', results: results.map((r: any) => r?.url ? { ...r, url: _an(r.url) } : r) };

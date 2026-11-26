@@ -32,6 +32,7 @@ let _runnerPaused: boolean   = false;
 let _runnerAbort: boolean    = false;
 let _runnerPauseReason: string    = '';
 let _runnerUnblockResolve: ((value: string) => void) | null = null;
+let _runnerAsking = false;   // the pause waits for the user's answer to a task's question; a manual or failure pause takes none, so no reply box is offered for it
 let _runnerSessionLog: { time: string; taskId: string; title: string; outcome: string; reason: string }[]     = [];
 let _runnerConsecutiveFails: number = 0;
 let _runnerPriorChatId: string | null    = null;
@@ -132,7 +133,9 @@ function _startRunner(all: boolean, onlyPath: string | null = null) {
     const locks = typeof navigator !== 'undefined' ? (navigator as any).locks : null;
     if (!locks?.request) { _runLoop().catch(console.error); return; }
     _runnerRunning = true;   // from now to the lock answer, a second press must not start another request
+    let _lockAnswered = false;
     locks.request('fg-autopilot', { ifAvailable: true }, async (lock: any) => {
+        _lockAnswered = true;
         if (!lock) {
             _runnerRunning = false;
             _updateRunnerUI();
@@ -141,7 +144,11 @@ function _startRunner(all: boolean, onlyPath: string | null = null) {
             return;
         }
         await _runLoop();
-    }).catch(console.error);
+    }).catch((e: any) => {
+        console.error(e);
+        // A request that failed before its callback ran leaves nothing running: the buttons must work again (f8d6ed1#4).
+        if (!_lockAnswered) { _runnerRunning = false; _updateRunnerUI(); const st = document.getElementById('runner-status'); if (st) st.textContent = `Autopilot could not start: ${e?.message ?? e}`; }
+    });
 }
 
 function runnerPause() {
@@ -191,7 +198,7 @@ function runnerStop() {
 function runnerSteer(text: string) {
     const msg = String(text || '').trim();
     if (!msg || !_runnerRunning) return;
-    if (_runnerPaused && _runnerUnblockResolve) { runnerSendUnblockWith(msg); return; }
+    if (_runnerPaused && _runnerUnblockResolve && _runnerAsking) { runnerSendUnblockWith(msg); return; }
     _runnerPendingSteer.push(msg);
     if (typeof agentStreaming !== 'undefined' && agentStreaming) {
         setSoftStopPending(true);
@@ -276,7 +283,9 @@ async function _runLoop() {
                 _runnerPaused      = true;
                 _runnerPauseReason = result.blockedReason || 'Worker blocked — needs input';
                 const _asked = _runnerPauseReason;
-                const userReply = await _waitForUnblock();
+                _runnerAsking = true; _updateRunnerUI();
+                let userReply: string;
+                try { userReply = await _waitForUnblock(); } finally { _runnerAsking = false; }
                 if (_runnerAbort) break;
                 // Deleted while it waited for the answer (the card's delete): it is not continued, so its file is not written again (AE-15).
                 if (!(await agentReadFile(task.path).then(() => true, () => false))) {
@@ -865,7 +874,8 @@ function _updateRunnerUI() {
     if (resumeBtn)   resumeBtn.style.display   = paused   ? 'inline-block' : 'none';
     if (restartBtn)  restartBtn.style.display  = _runnerRunning ? 'inline-block' : 'none';
     if (stopBtn)     stopBtn.style.display     = _runnerRunning ? 'inline-block' : 'none';
-    if (inputBar)    inputBar.style.display    = paused   ? 'flex' : 'none';
+    const asking = paused && _runnerAsking;
+    if (inputBar)    inputBar.style.display    = asking   ? 'flex' : 'none';
     if (interruptBar) interruptBar.style.display = running ? 'flex' : 'none';
 
     _renderRunnerStatus();
@@ -882,9 +892,9 @@ function _updateRunnerUI() {
     // so the session log stays visible after a run.
     if (_runnerRunning) toggleRunnerZone(true);
     // A user viewing another chat on the Chat tab gets the question and a reply box there (AE-22).
-    try { (window as any).chatViewerShowQuestion?.(paused ? _runnerPauseReason || 'it asked a question' : null); } catch {}
+    try { (window as any).chatViewerShowQuestion?.(asking ? _runnerPauseReason || 'it asked a question' : null); } catch {}
     // Paused for the user: the answer goes in the reply box, so put the cursor there.
-    if (paused && !document.body.classList.contains('fg-viewing-other')) { try { (document.getElementById('runner-unblock-input') as HTMLTextAreaElement | null)?.focus(); } catch {} }
+    if (asking && !document.body.classList.contains('fg-viewing-other')) { try { (document.getElementById('runner-unblock-input') as HTMLTextAreaElement | null)?.focus(); } catch {} }
 }
 
 export function _updateRunnerCurrentTask(task: Task | null): void {
@@ -981,7 +991,7 @@ const _runnerStartedPaths = new Set<string>();
 function runnerStartedTask(path: string): boolean { return _runnerRunning && _runnerStartedPaths.has(path); }
 
 /** What the paused run waits for, or null when it is not paused. */
-function getRunnerPauseReason(): string | null { return _runnerRunning && _runnerPaused ? (_runnerPauseReason || 'it asked a question') : null; }
+function getRunnerPauseReason(): string | null { return _runnerRunning && _runnerPaused && _runnerAsking ? (_runnerPauseReason || 'it asked a question') : null; }
 
 /** What the user answered while the run was on `title`: the acceptance review cannot see the chat, only the code. */
 function getRunnerUserAnswers(title: string): { question: string; answer: string }[] {

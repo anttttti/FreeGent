@@ -38,6 +38,9 @@ export async function sandboxFetch(input: string | URL | Request, init: RequestI
         const url    = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
         if (!proxyable(url, method, init.body != null)) throw err;
-        return responseFromPage(await pageFetch(url, method === 'HEAD' ? 'HEAD' : 'GET'), method === 'HEAD');
+        const page = pageFetch(url, method === 'HEAD' ? 'HEAD' : 'GET');
+        const sig = init.signal;   // the page-side fetch cannot be cancelled, but the caller's deadline still ends the wait
+        const r = sig ? await Promise.race([page, new Promise<never>((_, rej) => { const f = () => rej(sig.reason ?? new DOMException('aborted', 'AbortError')); sig.aborted ? f() : sig.addEventListener('abort', f, { once: true }); })]) : await page;
+        return responseFromPage(r, method === 'HEAD');
     }
 }

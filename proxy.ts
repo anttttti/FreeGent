@@ -8,7 +8,7 @@
 //           refuse, and the user's MCP credentials must not go through a shared proxy. On a static
 //           host or headless it is '' (direct fetch), which is a deliberate policy, not an omission.
 import { isStaticHost } from './static-hosts.js';
-import { getPrivacyLevel, privacyBlockReason, proxiedTarget, PRIVACY_LABELS } from './privacy.js';
+import { getPrivacyLevel, privacyBlockReason, proxiedTarget, proxiedTargets, PRIVACY_LABELS } from './privacy.js';
 
 export const DEFAULT_CF_WORKER = 'https://proxy.freegent.ai';
 type ProxyKind = 'get' | 'post' | 'local';
@@ -82,7 +82,7 @@ export function installPrivacyGuard(): void {
                 const manual = (() => { try { const v = (localStorage.getItem('fg_search_proxy') || '').trim(); return v ? new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`).origin : ''; } catch { return ''; } })();   // a bare host is normalised to https:// where the setting is read (codex R764)
                 const ctx = { pageOrigin, workerOrigins: [DEFAULT_CF_WORKER, manual].filter(Boolean) };
                 const refuse = (why: string) => { const e = new Error(why); e.name = 'PrivacyBlockedError'; return Promise.reject(e); };
-                const check = (body: unknown) => privacyBlockReason(proxiedTarget(url, body, pageOrigin) ?? url, level, ctx);
+                const check = (body: unknown) => { const all = proxiedTargets(url, body, pageOrigin); for (const t of all.length ? all : [url]) { const r = privacyBlockReason(t, level, ctx); if (r) return r; } return null; };
                 // A call to the local proxy whose envelope is not in init.body as a string: a prebuilt Request carries it inside, and its
                 // target was never looked at (codex R228). The Request's copy is read first; a body that cannot be read as text is refused.
                 if (proxiedTarget(url, '{"url":"x"}', pageOrigin) !== null && init?.body == null && typeof Request !== 'undefined' && input instanceof Request && input.method !== 'GET') {

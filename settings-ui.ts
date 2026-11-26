@@ -7,7 +7,7 @@ import { getDevKey, DEV_KEY_LS } from './proxy.js';
 import { getPrivacyLevel, setPrivacyLevel, parsePrivacyLevel, PRIVACY_LABELS, PRIVACY_HELP } from './privacy.js';
 import { rangeOf } from './settings-defs.js';
 import { specBlockedByPrivacy, samplingRangeError, pyodideStatus } from './config.js';
-import { resetSandbox } from './exec-sandbox-host.js';
+import { resetSandbox, sandboxPolicyStale } from './exec-sandbox-host.js';
 import { clearAllCooldowns } from './model-router.js';
 import { fmtDelay } from './retry.js';
 import { bestLadder, formatLadder, MODEL_LADDER_DATE } from './ladder-info.js';
@@ -224,9 +224,12 @@ function onPrivacyLevelChange(level: string) {
     updateActiveModelDisplay?.();
     // The code sandbox's network rules are set when its frame loads: restart it now (with Python, if that was loaded), so the new level
     // applies at once (codex R304). Its next call would also notice the change.
+    // Only when the policy differs (Routed and Provider-only share one).
+    if (sandboxPolicyStale()) {
     const wasPy = pyodideStatus === 'ready';
     resetSandbox('the privacy level changed; the code sandbox was restarted with its rules');
     if (wasPy) (window as any).startPyodide?.()?.catch?.(() => {});
+    }
     // Open page previews carry the policy they were built with: rebuilt now, so a preview opened under Routed cannot submit to a remote host after the switch to Local (review of de2c857).
     try { (window as any).scheduleArtifactRefresh?.(''); } catch {}
 }
@@ -1111,6 +1114,7 @@ function saveEditModel() {
     document.getElementById('fg-edit-model-dialog')?.remove();
     renderModelCatalogTable();
     renderMainModelList?.();
+    renderMediaModelSelectors();   // a model that now takes audio or video is offered at once (e93fcb9#9)
 }
 
 // ── Multi-selection state for the priority list ──────────────────────────────
