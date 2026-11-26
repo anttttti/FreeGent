@@ -167,6 +167,9 @@ function _configureHeadless(provider: any, model: any, apiKey: any, apiUrl: any,
         if (v && !_ls.getItem(lsKey)) _ls.setItem(lsKey, v);
     }
 
+    if (provider === 'zro') provider = 'moonmath';   // Zro was renamed MoonMath: the old name keeps its key slot and its endpoint (ea43c80#4)
+    // A provider that was removed is refused before its key is written: it fell to the generic slot, and the next request could send it to another endpoint (4a71646#3).
+    if (String(provider) === 'apinex') throw new Error(`the provider "${provider}" is no longer supported; choose another provider`);
     // Explicit --api-key or FREEGENT_API_KEY always wins for the selected provider
     const keyName = (_KEY_MAP as Record<string, string>)[provider] || 'fg_openai_key';
     if (apiKey) _ls.setItem(keyName, apiKey);

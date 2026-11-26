@@ -75,14 +75,15 @@ function _rlLoad(key: string): _RlRec {
     try {
         const raw = localStorage.getItem('fg_rl:' + key);
         if (raw) { const r = JSON.parse(raw); if (Array.isArray(r?.ts)) return { ts: r.ts.filter((t: any) => typeof t === 'number'), day: String(r.day ?? ''), count: Number(r.count) || 0 }; }
-        return { ts: [], day: '', count: 0 };
+        // Nothing stored: the count is zero, unless a write failed (a full quota) and the memory copy is all there is (ea43c80#6).
+        return _rlMem.get(key) ?? { ts: [], day: '', count: 0 };
     } catch {}
     return _rlMem.get(key) ?? { ts: [], day: '', count: 0 };
 }
 
 function _rlSave(key: string, rec: _RlRec): void {
-    _rlMem.set(key, rec);
-    try { localStorage.setItem('fg_rl:' + key, JSON.stringify(rec)); } catch {}
+    try { localStorage.setItem('fg_rl:' + key, JSON.stringify(rec)); _rlMem.delete(key); }
+    catch { _rlMem.set(key, rec); }   // the memory copy exists only while storage refuses the write
 }
 
 // Cache the known-limits Map so _getKnownLimits is O(1) per call instead of O(n).
@@ -316,7 +317,7 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
     // concurrent requests" with no Retry-After; a slot frees as soon as one finishes, for every Requesty model at once.
     if (endpoint.provider === 'requesty') {
         if (/HTTP 429\b/.test(_msg) && /limit of concurrent requests/i.test(_msg)) {
-            _endpointCooldown.set(key, Date.now() + 5_000);
+            if ((_endpointCooldown.get(key) ?? 0) < Date.now() + 5_000) _endpointCooldown.set(key, Date.now() + 5_000);   // never shortens an hour-long wait set by a quota error (12934ef#3)
             _cooldownSiblings(endpoint, 5_000, false);
             return;
         }
@@ -346,7 +347,7 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
         const dailyUtc = endpoint.provider === 'moonmath' && !/key_quota_exceeded|API key has reached its spend limit/i.test(_msg);
         const ms = parseQuotaResetMs(_msg) ?? _cat?.cooldownMs ?? (dailyUtc ? untilUtcMidnight() : Math.max(exactMs ?? 0, 60 * 60_000));
         _endpointCooldown.set(key, Date.now() + ms);
-        _cooldownSiblings(endpoint, ms);
+        _cooldownSiblings(endpoint, ms, !(endpoint.provider === 'vercel' && /HTTP 402\b/.test(_msg)));   // Vercel's balance is one account's: the plain beam ID is no "-free" name but refused too (2636d66#3)
         return;
     }
     // Per-model catalog override: if the catalog entry has a cooldownMs field, use it as a

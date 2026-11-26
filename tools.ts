@@ -1399,7 +1399,7 @@ async function _syntaxCheck(path, text: string | null = null, { staged = false }
     // Experiment syntax_watch: shell scripts too, and a worker's staged text (not on disk) through a temporary copy.
     const _watch = runtime.experiment('syntax_watch');
     if (runtime.hasNativeExec && _watch && ['py', 'js', 'mjs', 'cjs', 'sh', 'bash'].includes(ext)
-            && (!staged || (typeof text === 'string' && text.length <= 400_000))) {
+            && (!staged || (typeof text === 'string' && text.length <= 90_000))) {   // base64 of it is one argument of bash -c, which Linux caps at 128 KiB: a larger text spawned nothing and read as a clean parse (1861f81#9)
         return _nativeSyntaxCheck(path, ext, staged ? text : null);
     }
     if (runtime.hasNativeExec && !staged && ['py', 'js', 'mjs', 'cjs'].includes(ext)) {

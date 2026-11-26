@@ -111,6 +111,9 @@ describe('classification & policy', () => {
         expect(isTransient(new Error('model not found'))).toBe(false);
         expect(isTransient(new Error('thought_signature validation failed'))).toBe(false);
     });
+    it('a Requesty 412 monthly-spend refusal is transient, so the retry handler can cool it and rotate (ea43c80#1)', () => {
+        expect(isTransient(new Error('HTTP 412: Reached monthly spend limit for API key'))).toBe(true);
+    });
     it('retryDelay: fixed mode reads localStorage; rate limits back off harder', () => {
         localStorage.setItem('fg_retry_mode', 'fixed');
         localStorage.setItem('fg_retry_fixed_ms', '5000');

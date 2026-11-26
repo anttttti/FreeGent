@@ -753,7 +753,8 @@ export const FREE_MODEL_BLACKLIST: ReadonlySet<string> = new Set([
     'moonmath|glm-5.3-flash',                    // HTTP 403 "not available for this API key"; MoonMath's /models lists glm-5.3, not glm-5.3-flash (2026-11-23)
     'requesty|mistral/leanstral-1-5',            // HTTP 404 "no longer available"; not listed as free by Requesty (2026-11-23)
 ]);
-function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec); }
+// A model of a removed provider is retired like a withdrawn one: a list that holds only those is empty by retirement, not a list to repair with the default endpoint (4a71646#2).
+function isBlacklistedModel(spec: string): boolean { return FREE_MODEL_BLACKLIST.has(spec) || _REMOVED_PROVIDERS.has(String(spec).split('|')[0]); }
 // Providers FreeGent no longer supports. Their entries are dropped even from saved custom models
 // (e.g. ones an earlier model-update check added), so saved priority lists prune them too.
 //   opencode — OpenCode Zen's free tier works only from the official OpenCode client since

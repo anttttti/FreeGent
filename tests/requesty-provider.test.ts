@@ -105,6 +105,18 @@ describe('Requesty cooldowns', () => {
         expect(getCooldownRemaining('kilo|reflection/beam-free')).toBe(0);
     });
 
+    it('a concurrency refusal arriving later does not shorten the hour set by the free-model limit (12934ef#3)', () => {
+        _markCooldown(W.specToEndpoint(LING), null, new Error("HTTP 429: You've hit the rate limit for free models. Retry later"));
+        _markCooldown(W.specToEndpoint(ULTRA), 5_000, new Error('HTTP 429: Your organization reached its limit of concurrent requests'));
+        expect(getCooldownRemaining(ULTRA)).toBe(3_600);
+        expect(getCooldownRemaining(LING)).toBe(3_600);
+    });
+
+    it('a Vercel 402 balance refusal cools the plain beam route with the -free one (2636d66#3)', () => {
+        _markCooldown({ provider: 'vercel', model: 'reflection/beam-free' }, null, new Error('HTTP 402: insufficient balance'));
+        expect(getCooldownRemaining('vercel|reflection/beam')).toBeGreaterThan(0);
+    });
+
     it('leaves an upstream provider 429 to the generic per-model handling', () => {
         _markCooldown(W.specToEndpoint(LING), 30_000, new Error('HTTP 429: Too many requests'));
         expect(getCooldownRemaining(LING)).toBeGreaterThan(0);

@@ -40,7 +40,7 @@ const _NET_CODE_RE = /^(?:ECONN\w+|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|ENETUNREA
 // Message fallback. Grouped by who says it; each group is a family of the same failure.
 const _TRANSIENT_MSG_RE = new RegExp([
     // provider/HTTP: server errors, throttling, overload, and the proxies' bare-status forms
-    'HTTP 5\\d\\d|HTTP 429|HTTP 402|HTTP 408|HTTP 425|HTTP 499|Internal error|rate.?limit|too many requests',
+    'HTTP 5\\d\\d|HTTP 429|HTTP 402|HTTP 412|HTTP 408|HTTP 425|HTTP 499|Internal error|rate.?limit|too many requests',
     'request too large|quota exceeded|insufficient balance|maximum context length|not found|file not found',
     'service unavailable|bad gateway|gateway time-?out|idle timeout|high traffic|high demand|spikes in demand',
     'overloaded|temporarily unavailable|try again later|upstream connect error|no healthy upstream',
@@ -564,7 +564,8 @@ export function _makeOAIRetryHandler({ getEp, setEp, setFallback = null, onNote,
                 }
             }
             // No rotation target — retry same endpoint after cooldown.
-            if (is429 && e.retryAfterMs != null) return _boundedWait(Math.max(e.retryAfterMs, 5_000), ep, e, is429, isCustom);
+            // The stored cooldown can run longer than the response's hint (a daily allowance spent, a check-in refusal that carries an RPM reset): resending before it ends is refused again (ea43c80#5, ddafd59#1).
+            if (is429 && e.retryAfterMs != null) return _boundedWait(Math.max(e.retryAfterMs, 5_000, getCooldownRemaining(`${ep.provider}|${ep.model}`) * 1000), ep, e, is429, isCustom);
             const remaining = getCooldownRemaining(`${ep.provider}|${ep.model}`) * 1000;
             // For custom endpoints: use 5s flat for recoverable server errors (OOM/CUDA, HTTP 5xx).
             // For network-level failures (Failed to fetch / server unreachable), use exponential

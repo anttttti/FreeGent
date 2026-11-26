@@ -42,10 +42,10 @@ export function createNativeExec({ workspaceRoot, targetContainer }: { workspace
         // In a task container the local timeout only kills the `docker exec` client; the process inside
         // kept running. `timeout` inside the container ends it too (skipped where the image has none).
         const _dc = (bin: string, flag: string, src = code) => ['docker', ['exec', '-i', String(targetContainer), 'sh', '-c',
-            `if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL ${Math.ceil(TIMEOUT_MS / 1000) + 5} "$@"; else exec "$@"; fi`, 'sh', bin, flag, src]] as const;
+            `PYTHONUNBUFFERED=1; export PYTHONUNBUFFERED; if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL ${Math.ceil(TIMEOUT_MS / 1000) + 5} "$@"; else exec "$@"; fi`, 'sh', bin, flag, src]] as const;
         const LANG_CMD: Record<string, readonly [string, readonly string[]]> = targetContainer
             ? { bash: _dc('bash', '-c'), python: _dc('python3', '-c'), javascript: _dc('node', '-e', js) }
-            : { bash: ['bash', ['-c', code]], python: ['python3', ['-c', code]], javascript: ['node', ['-e', js]] };
+            : { bash: ['bash', ['-c', code]], python: ['python3', ['-u', '-c', code]], javascript: ['node', ['-e', js]] };
         const entry = LANG_CMD[language];
         if (!entry) { resolve({ error: `nativeExec: unsupported language '${language}'` }); return; }
         const [cmd, cmdArgs] = entry;

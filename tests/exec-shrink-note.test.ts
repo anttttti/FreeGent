@@ -47,6 +47,12 @@ describe('native execute_code', () => {
         expect(r.note).toMatch(/tracked\.ts is now EMPTY \(it was 18,000 bytes\)/);
     });
 
+    it('keeps the output a Python call printed before its time limit killed it (31c7a75#3)', async () => {
+        const run = createNativeExec({ workspaceRoot: dir });
+        const r = await run('python', "print('reached the loop')\nimport time\ntime.sleep(30)\n", { timeoutMs: 1500 });
+        expect(r.stdout).toContain('reached the loop');
+    }, 20_000);
+
     it('says nothing for a script that rewrites a file at a similar size', async () => {
         writeFileSync(join(dir, 'a.txt'), 'x'.repeat(10000));
         const run = createNativeExec({ workspaceRoot: dir });

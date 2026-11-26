@@ -21,7 +21,7 @@ export default defineConfig({
     nav: [
       { text: 'Open the app', link: 'https://freegent.ai/', target: '_self' },
       { text: 'GitHub', link: GH },
-      { text: VERSION, link: fgVersionUrl(VERSION) },
+      { text: VERSION.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`), link: fgVersionUrl(VERSION) },   // item.text is rendered as HTML
     ],
     sidebar: [
       { text: 'Overview', link: '/overview' },

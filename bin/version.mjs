@@ -5,7 +5,8 @@
 //      e.g. v1.0.77-3-gabc1234 (3 commits later), with -dirty for uncommitted changes
 //   3. "dev" when neither is available (an npm-installed copy without .git)
 import { execFileSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,8 +14,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export function fgVersion(env = process.env) {
     if (env.FG_VERSION) return env.FG_VERSION;
     try {
-        return execFileSync('git', ['describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--dirty'],
-            { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'dev';
+        const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        // Git looks in parent directories: a copy unpacked inside another checkout would report that checkout's tag.
+        if (realpathSync(git(['rev-parse', '--show-toplevel'])) !== realpathSync(resolve(ROOT))) return 'dev';
+        // Deployment tags only (vX.Y.Z): a pre-release tag such as v1.0.78-rc.1 matches the glob but is none.
+        return git(['describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--exclude', 'v*-*', '--dirty']) || 'dev';
     } catch { return 'dev'; }
 }
 

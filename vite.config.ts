@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { localIgnoredDirs } from './scripts/local-ignored-dirs.mjs';
 import { fgVersion, fgVersionUrl } from './bin/version.mjs';
+const _fgVersionOnce = fgVersion();
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   loadDotenv, configDir, serverKeys, serverKeyStatus, loadOrCreateToken,
@@ -320,8 +321,8 @@ export default defineConfig(() => {
     // Deployment version (<series>.<counter>, set by deploy.sh / the Pages workflow from the deploy
     // tag); local servers get `git describe` (see bin/version.mjs). Shown in Settings, sent with uploaded chat logs.
     define: {
-      __FG_VERSION__: JSON.stringify(fgVersion()),
-      __FG_VERSION_URL__: JSON.stringify(fgVersionUrl(fgVersion())),
+      __FG_VERSION__: JSON.stringify(_fgVersionOnce),
+      __FG_VERSION_URL__: JSON.stringify(fgVersionUrl(_fgVersionOnce)),   // one lookup for both: a file changing between two git calls gave a tag with the homepage link (79c4173#4)
     },
     esbuild: {
       target: 'safari12',

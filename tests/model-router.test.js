@@ -233,3 +233,14 @@ describe('OpenRouter free models share one daily count', () => {
         expect(knownLimitWaitMs({ provider: 'openrouter', model: 'n/vl:free' })).toBeGreaterThan(0);
     });
 });
+
+// ea43c80#6: a full storage quota (writes fail, reads work) must not zero the proactive limit.
+describe('known limits when storage refuses writes', () => {
+    afterEach(() => { vi.restoreAllMocks(); delete globalThis.getAllModels; localStorage.removeItem('fg_rl:rpdfull|m'); });
+    it('still counts the requests it sent', () => {
+        globalThis.getAllModels = () => [{ provider: 'rpdfull', model: 'm', rpd: 1 }];
+        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+        recordRequest({ provider: 'rpdfull', model: 'm' });
+        expect(knownLimitWaitMs({ provider: 'rpdfull', model: 'm' })).toBeGreaterThan(0);
+    });
+});

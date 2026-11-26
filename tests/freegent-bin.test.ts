@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 // @ts-ignore — plain ESM launcher helper
 import { route, HELP } from '../bin/route.mjs';
 
@@ -52,5 +56,22 @@ describe('codex R8-001 and R9-001', () => {
         const pkg = JSON.parse((await import('node:fs')).readFileSync('package.json', 'utf8'));
         expect(pkg.dependencies.tsx).toBeTruthy();
         expect(pkg.devDependencies?.tsx).toBeUndefined();
+    });
+});
+
+// 79c4173#2/#3: the version comes from this package's own repository, and only from deployment tags.
+describe('fgVersion from git', () => {
+    const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd, stdio: 'ignore' });
+    const load = async (root: string) => execFileSync('node', ['--input-type=module', '-e', `import('${pathToFileURL(join(root, 'bin', 'version.mjs')).href}').then(m => console.log(m.fgVersion({})))`], { encoding: 'utf8' }).trim();
+    const setup = (root: string) => { mkdirSync(join(root, 'bin'), { recursive: true }); copyFileSync(join(__dirname, '..', 'bin', 'version.mjs'), join(root, 'bin', 'version.mjs')); };
+    it('a copy inside another checkout is dev, and a pre-release tag is not a version', async () => {
+        const outer = mkdtempSync(join(tmpdir(), 'fg-ver-'));
+        try {
+            git(outer, 'init', '-q'); writeFileSync(join(outer, 'a'), '1'); git(outer, 'add', '.'); git(outer, 'commit', '-q', '-m', 'x'); git(outer, 'tag', 'v1.0.1');
+            const inner = join(outer, 'node_modules', 'freegent'); setup(inner);
+            expect(await load(inner)).toBe('dev');
+            setup(outer); writeFileSync(join(outer, 'b'), '2'); git(outer, 'add', '.'); git(outer, 'commit', '-q', '-m', 'y'); git(outer, 'tag', 'v1.0.2-rc.1');
+            expect(await load(outer)).toMatch(/^v1\.0\.1-1-g[0-9a-f]+/);
+        } finally { rmSync(outer, { recursive: true, force: true }); }
     });
 });
