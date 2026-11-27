@@ -1467,7 +1467,7 @@ async function _agentSendReady(container: HTMLElement | null = null): Promise<vo
     const _activeSpec = getActiveMainModelList()[0];
     const _keySpec = _activeSpec?.startsWith(provider + '|') ? _activeSpec : provider + '|';
     if (!specHasKey(_keySpec)) {
-        if (canOfferGuestQuota()) { const _offerChat = activeChatId; offerGuestQuota(() => { if (activeChatId === _offerChat) void agentSend(container); }, () => specHasKey(_keySpec)); } else showSettings('credentials');
+        if (canOfferGuestQuota()) { const _offerChat = activeChatId; offerGuestQuota(() => { if (activeChatId === _offerChat) void agentSend(container); }, () => getActiveMainModelList().length > 0); } else showSettings('credentials');
         return;
     }
 
