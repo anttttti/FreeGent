@@ -182,6 +182,15 @@ After the worker returns, use its findings to proceed with the task. Do not foll
 
     },
     {
+        // Chat mode has no standing board text (Cowork's prompt has it): the model answered "create tasks" with a list in its reply or a notes file and the board stayed empty.
+        name: 'kanban-board',
+        description: 'Creating tasks means writing Tasks board files (fg-tasks/NNN-slug.md).',
+        exclude_mode: 'container',
+        trigger: 'create tasks, create a task, add tasks, add a task, new task, tasks board, task board, kanban, backlog, to-do list, todo list, into tasks',
+        body_fn: () => typeof getMode === 'function' && getMode() === 'cowork' ? '' :
+            'The Tasks board shows the files `fg-tasks/NNN-slug.md` (front matter `id`, `title`, `status: open`, `priority`; then `# title`, what to do, `## Acceptance Criteria`). To create tasks, write those files, numbered after the highest id there, not a list in your reply or a notes file, and say they are on the board. Asking for tasks is the whole request: no `current.md`. Move one with `update_task_status(path, status)` when it is available.',
+    },
+    {
         name: 'execution-workflow',
         description: 'Plan→Execute→Verify pattern for mid-task work, and completion format.',
         exclude_mode: 'container',

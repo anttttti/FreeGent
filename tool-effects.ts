@@ -40,7 +40,7 @@ const TOOLS: readonly ToolRow[] = [
     { name: 'deep_research', optIn: true, writes: 'code' },   // saves its report under research/ (codex R122)
     { name: 'academic_search', optIn: true }, { name: 'package_search', optIn: true }, { name: 'context7_docs', optIn: true },
     { name: 'repo_map', optIn: true }, { name: 'run_git', optIn: true }, { name: 'ast_query', optIn: true, pathArg: true },
-    { name: 'update_task_status', optIn: true, pathArg: true },
+    { name: 'update_task_status', pathArg: true },   // on by default: a chat that creates tasks for the Tasks board moves them too
     ...['navigate', 'snapshot', 'click', 'type', 'select', 'scroll', 'back', 'tabs', 'done'].map(n => ({ name: `browser_${n}`, optIn: true as const })),
 ];
 

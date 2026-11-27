@@ -203,3 +203,21 @@ describe('api-request-shape skill', () => {
         expect(W.reactiveSkillGuidance([{ name: 'execute_code', result: { stdout: 'ok', exit_code: 0 } }])).not.toContain('### api-request-shape');
     });
 });
+
+describe('kanban-board skill', () => {
+    const inputs = (text) => ({ roleName: null, lowerText: text, rawText: text, firstMsg: true, isTaskCompletion: false, turn: 1,
+        wsExts: new Set(), wsNames: new Set(), wsAllPaths: new Set(), msgMedia: new Set(), histTools: new Set() });
+    it('fires on a request for tasks, not on an ordinary mention of the word, and says nothing in Cowork mode', () => {
+        const fires = (t) => W.evaluateSkillTriggers(W.skillsRegistry, new Set(), inputs(t)).has('kanban-board');
+        expect(fires('please create tasks for the login page')).toBe(true);
+        expect(fires('add these to the kanban board')).toBe(true);
+        expect(fires('my task is to fix the build')).toBe(false);
+        const skill = W.skillsRegistry.get('kanban-board');
+        W.setMode('chat');
+        expect(skill.body_fn()).toMatch(/fg-tasks\/NNN-slug\.md/);
+        W.setMode('cowork');
+        const cowork = skill.body_fn();
+        W.setMode('chat');
+        expect(cowork).toBe('');
+    });
+});
