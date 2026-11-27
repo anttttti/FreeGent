@@ -928,6 +928,7 @@ async function _handleUndoWrite(args: any, context: any = null) {
             if (err) return { error: err };
         }
         context.staging.delete(args.path); context.binary?.delete(args.path);
+        _noteSyntax(args.path, null);   // syntax_watch: the file is back as the worker found it
         return { success: true, path: args.path, note: 'Restored the file as it was before this worker changed it.' };
     }
     const stack = _fileCheckpoints.get(args.path);

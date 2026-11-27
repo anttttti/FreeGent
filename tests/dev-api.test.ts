@@ -648,6 +648,7 @@ describe('hermes C5 and opencode §3.2: the read-only git gate', () => {
         expect(hardenGitArgs(['--no-pager', 'log', '-1'])).toEqual(['-c', 'core.fsmonitor=false', '--no-pager', 'log', '--no-ext-diff', '--no-textconv', '-1']);
         expect(hardenGitArgs(['status'])).toEqual(['-c', 'core.fsmonitor=false', 'status']);
         expect(hardenGitArgs(['blame', 'f.bin'])).toEqual(['-c', 'core.fsmonitor=false', 'blame', '--no-textconv', 'f.bin']);
+        expect(hardenGitArgs(['annotate', 'f.bin'])).toEqual(['-c', 'core.fsmonitor=false', 'annotate', '--no-textconv', 'f.bin']);
     });
 });
 

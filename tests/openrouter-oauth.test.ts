@@ -74,7 +74,7 @@ describe('Connect refuses before leaving the page (Sol 6.2 review of 6dfb26b)', 
         const alerts: string[] = []; const realAlert = W.alert; W.alert = (m: string) => alerts.push(m);
         localStorage.setItem('fg_privacy_level', 'local');
         try { await connectOpenRouter(); } finally { W.alert = realAlert; localStorage.removeItem('fg_privacy_level'); }
-        expect(alerts.join()).toMatch(/Local privacy level/);
+        expect(alerts.join()).toMatch(/Local privacy level.*not work either/);
         expect(sessionStorage.getItem('fg_openrouter_oauth')).toBeNull();
     });
 });

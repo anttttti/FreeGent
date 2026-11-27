@@ -4,6 +4,7 @@
 // WASM shell and Pyodide (tests/fake-sandbox.ts), as a default browser session runs.
 import { setupBrowserTools } from './fake-sandbox';
 import { LazySnapshot } from '../workers';
+import { openSyntaxErrors } from '../tools.ts';
 
 const W = globalThis as any;
 const tool = (name: string, args: any, ctx: any = null) => W.executeToolAsync(name, args, ctx);
@@ -230,6 +231,17 @@ describe('run_workers', () => {
         expect(await tool('undo_write', { path: 'u.txt' }, a)).toMatchObject({ success: true });
         expect(await W.agentReadFile('u.txt')).toBe('v2');
         expect((await tool('read_file', { path: 'u.txt' }, a)).content).toBe('v2');
+    });
+
+    it('a worker\'s undo_write clears the syntax_watch error of the edit it took back', async () => {
+        const prev = process.env.FG_EXPERIMENTS; process.env.FG_EXPERIMENTS = 'syntax_watch';
+        try {
+            const a = { snapshot: new LazySnapshot(await W.agentListFiles()), staging: new Map(), depth: 0 };
+            expect((await tool('write_file', { path: 'w.json', content: '{"a": ' }, a)).syntax_error).toBeTruthy();
+            expect(openSyntaxErrors().map(([p]) => p)).toEqual(['w.json']);
+            expect(await tool('undo_write', { path: 'w.json' }, a)).toMatchObject({ success: true });
+            expect(openSyntaxErrors()).toEqual([]);
+        } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 
     it('a worker\'s undo_write also puts back an edit its execute_code already wrote into the workspace', async () => {

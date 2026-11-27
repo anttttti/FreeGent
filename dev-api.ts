@@ -687,7 +687,7 @@ export function hardenGitArgs(args: string[]): string[] {
     const { sub, index } = gitSubcommand(args);
     const out = ['-c', 'core.fsmonitor=false', ...args];
     if (sub === 'diff' || sub === 'show' || sub === 'log') out.splice(2 + index + 1, 0, '--no-ext-diff', '--no-textconv');
-    else if (sub === 'blame') out.splice(2 + index + 1, 0, '--no-textconv');   // blame runs a repo-configured textconv by default; grep only with --textconv, which gitArgsRefusal refuses (night exploration D047, D048, D050)
+    else if (sub === 'blame' || sub === 'annotate') out.splice(2 + index + 1, 0, '--no-textconv');   // blame (and its alias annotate) runs a repo-configured textconv by default; grep only with --textconv, which gitArgsRefusal refuses (night exploration D047, D048, D050)
     return out;
 }
 

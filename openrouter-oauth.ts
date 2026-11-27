@@ -46,7 +46,7 @@ export function openRouterAuthUrl(callbackUrl: string, challenge: string, method
 /** Settings → Credentials → Connect: leave for openrouter.ai to approve a key. */
 export async function connectOpenRouter(): Promise<void> {
     // Refused before the page is left: after the approval the return would be blocked by the privacy guard, or the key could not be kept.
-    if (getPrivacyLevel() === 'local') { alert('Connect OpenRouter is off at the Local privacy level (Settings → Privacy). Paste a key instead, or change the level.'); return; }
+    if (getPrivacyLevel() === 'local') { alert('Connect OpenRouter is off at the Local privacy level, which blocks OpenRouter itself, so a pasted key would not work either. Change the level in Settings → Privacy, then Connect.'); return; }
     if (keyVaultEnabled() && !keyVaultUnlocked()) { alert('Unlock your saved keys first (Settings → Credentials), then Connect OpenRouter.'); return; }
     const have = (() => { try { return localStorage.getItem('fg_openrouter_key') || ''; } catch { return ''; } })();
     if (have && !have.startsWith('__fgsk__') &&
