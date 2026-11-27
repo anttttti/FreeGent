@@ -65,6 +65,7 @@ import { bzip2Cmd, bunzip2Cmd, bzcatCmd } from './bzip2';
 import { mkTempCmd } from './mktemp';
 import { pkgCmd } from './pkg';
 import { sevenZipCmd } from './sevenzip';
+import { mediaToolCmds } from './media-tools';
 import { openssl } from './openssl';
 import { packageFamilyCommand } from '../wasi-packages';
 
@@ -75,6 +76,6 @@ export const COMMAND_CATALOG = [
     ...shiroCmds,
     ...[grepCmd, sedCmd, globCmd, jsEvalCmd, nodeCmd, pythonCmd, python3Cmd, pipCmd, pip3Cmd, pytestCmd, curlCmd, wgetCmd],
     ...[npmCmd, npxCmd, diffCmd, jqCmd, rgCmd, gzipCmd, gunzipCmd, mkTempCmd,
-        pkgCmd, sevenZipCmd, openssl, packageFamilyCommand('wabt'), packageFamilyCommand('util-linux'),
+        pkgCmd, sevenZipCmd, ...mediaToolCmds, openssl, packageFamilyCommand('wabt'), packageFamilyCommand('util-linux'),
         xzCmd, unxzCmd, xzcatCmd, zstdCmd, unzstdCmd, zstdcatCmd, bzip2Cmd, bunzip2Cmd, bzcatCmd],
 ];

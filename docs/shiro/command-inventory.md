@@ -2,7 +2,7 @@
 
 Generated from the working tree by `npx tsx scripts/shiro-inventory.mjs --update-note`. Regenerate after routing changes. The machine-readable command matrix retains source hashes and candidate declarations. `command-coverage.json` retains a generated snapshot from the separately versioned benchmark repository; when that checkout is present, `--check` also detects coverage drift.
 
-251 command names; 140 command modules; 29 WASI artifact identities. Availability does not establish complete flag compatibility or migration acceptance.
+255 command names; 141 command modules; 29 WASI artifact identities. Availability does not establish complete flag compatibility or migration acceptance.
 
 ## Registration and lookup
 
@@ -24,7 +24,7 @@ Lookup regression evidence: [shell precedence and hash tests](../../tests/shiro-
 | shell parser | bash | `.`, `((...))`, `alias`, `break`, `builtin`, `caller`, `command`, `compgen`, `complete`, `compopt`, `continue`, `declare`, `dirs`, `disown`, `enable`, `eval`, `exec`, `export`, `fc`, `getopts`, `hash`, `jobs`, `let`, `local`, `mapfile`, `popd`, `pushd`, `read`, `readarray`, `readonly`, `return`, `set`, `setopt`, `shift`, `shopt`, `source`, `trap`, `type`, `typeset`, `umask`, `unalias`, `unset`, `wait` |
 | shell parser | capability-only | `ulimit` |
 | typescript | bash | `:`, `[`, `7z`, `awk`, `base32`, `base64`, `basename`, `bash`, `bunzip2`, `bzcat`, `bzip2`, `cat`, `cd`, `chmod`, `cksum`, `clear`, `cmp`, `column`, `comm`, `cp`, `csplit`, `curl`, `cut`, `date`, `dd`, `df`, `diff`, `dirname`, `dos2unix`, `du`, `echo`, `egrep`, `env`, `exit`, `expand`, `expr`, `factor`, `false`, `fgrep`, `file`, `find`, `fmt`, `fold`, `free`, `getconf`, `glob`, `grep`, `gunzip`, `gzip`, `head`, `help`, `hostname`, `iconv`, `id`, `install`, `join`, `js-eval`, `kill`, `less`, `ls`, `md5sum`, `mkdir`, `mktemp`, `mv`, `nl`, `node`, `nohup`, `npm`, `nproc`, `npx`, `numfmt`, `od`, `paste`, `patch`, `pip`, `pip3`, `pkg-config`, `pr`, `printenv`, `printf`, `pwd`, `pytest`, `python`, `python3`, `readlink`, `realpath`, `rg`, `rm`, `rmdir`, `sed`, `seq`, `sh`, `sha1sum`, `sha256sum`, `sha384sum`, `sha512sum`, `shasum`, `shuf`, `sleep`, `sort`, `split`, `stat`, `strings`, `sum`, `sync`, `tac`, `tail`, `tar`, `tee`, `test`, `timeout`, `touch`, `tr`, `true`, `truncate`, `tsort`, `uname`, `unexpand`, `uniq`, `unix2dos`, `unxz`, `unzip`, `uptime`, `uuidgen`, `watch`, `wc`, `wget`, `which`, `whoami`, `xargs`, `xxd`, `xz`, `xzcat`, `yes`, `zcat`, `zip` |
-| typescript | integration-only | `open`, `pkg`, `xdg-open` |
+| typescript | integration-only | `duckdb`, `ffmpeg`, `ffprobe`, `open`, `pkg`, `tesseract`, `xdg-open` |
 | wasm package | bash | `brotli`, `cal`, `coreutils`, `cowsay`, `dash`, `figlet`, `fortune`, `gbase64`, `gcat`, `ghashsum`, `ghead`, `gls`, `gsort`, `gtail`, `guniq`, `gwc`, `irb`, `lolcat`, `lua`, `optipng`, `php`, `qjs`, `qr2text`, `quickjs`, `ruby`, `sqlite`, `sqlite3`, `uuid`, `viu`, `wasm-grep`, `wasm-sed`, `wasm-strip`, `wasm-validate`, `wasm2wat`, `wat2wasm` |
 | wasm | bash | `bc`, `dc`, `hexdump`, `jq`, `rev`, `unzstd`, `zstd`, `zstdcat` |
 
@@ -108,6 +108,6 @@ Artifact identities count distinct manifest package/version/pin cache keys, incl
 
 This candidate list is a documentation comparison, not another runtime registry. Names below have no catalog/parser/package entry; installed user scripts may still add them.
 
-`chgrp`, `chroot`, `mkfifo`, `mknod`, `syncfs`, `install-info`, `ldconfig`, `ldd`, `readelf`, `objdump`, `strip`, `ar`, `as`, `ld`, `systemctl`, `service`, `journalctl`, `dmesg`, `modprobe`, `lsmod`, `mount`, `umount`, `swapon`, `swapoff`, `sudo`, `su`, `passwd`, `useradd`, `userdel`, `groupadd`, `groups`, `who`, `w`, `last`, `login`, `ssh`, `scp`, `sftp`, `rsync`, `telnet`, `ftp`, `ping`, `traceroute`, `ip`, `ifconfig`, `ss`, `netstat`, `lsof`, `nc`, `netcat`, `tcpdump`, `git`, `svn`, `hg`, `docker`, `podman`, `kubectl`, `crontab`, `at`, `watchdog`, `ps`, `man`, `vi`, `nano`, `ed`, `top`, `pgrep`, `pkill`, `tput`, `stty`, `cc`, `gcc`, `ffmpeg`, `magick`, `psql`.
+`chgrp`, `chroot`, `mkfifo`, `mknod`, `syncfs`, `install-info`, `ldconfig`, `ldd`, `readelf`, `objdump`, `strip`, `ar`, `as`, `ld`, `systemctl`, `service`, `journalctl`, `dmesg`, `modprobe`, `lsmod`, `mount`, `umount`, `swapon`, `swapoff`, `sudo`, `su`, `passwd`, `useradd`, `userdel`, `groupadd`, `groups`, `who`, `w`, `last`, `login`, `ssh`, `scp`, `sftp`, `rsync`, `telnet`, `ftp`, `ping`, `traceroute`, `ip`, `ifconfig`, `ss`, `netstat`, `lsof`, `nc`, `netcat`, `tcpdump`, `git`, `svn`, `hg`, `docker`, `podman`, `kubectl`, `crontab`, `at`, `watchdog`, `ps`, `man`, `vi`, `nano`, `ed`, `top`, `pgrep`, `pkill`, `tput`, `stty`, `cc`, `gcc`, `magick`, `psql`.
 
 `make`, `chown`, `ln`, `col` and `ulimit` have explicit capability-only contracts. A listed name does not mean browser build execution, ownership changes, links or kernel limits are available.

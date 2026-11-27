@@ -65,6 +65,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `done` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `dos2unix` | typescript; shiro/commands/line-endings.ts | bash |  | 2 |
 | `du` | typescript; shiro/commands/du.ts | bash |  | 4 |
+| `duckdb` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | integration-only |  | 0 |
 | `echo` | typescript; shiro/commands/echo.ts | bash |  | 4 |
 | `egrep` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | bash |  | 2 |
 | `elif` | shell grammar; shiro/shell.ts | bash |  | 1 |
@@ -81,6 +82,8 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `factor` | typescript; shiro/commands/factor.ts | bash |  | 3 |
 | `false` | typescript; shiro/commands/false.ts | bash |  | 1 |
 | `fc` | shell parser; shiro/shell.ts | bash |  | 1 |
+| `ffmpeg` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | integration-only |  | 0 |
+| `ffprobe` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | integration-only |  | 0 |
 | `fgrep` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | bash |  | 2 |
 | `fi` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `figlet` | wasm package; shiro/wasi-packages.ts | bash | figlet@0.0.1: figlet; argv ["figlet"] | 1 |
@@ -204,6 +207,7 @@ The matrix includes the generator hash and separately versioned coverage snapsho
 | `tail` | typescript; shiro/commands/tail.ts | bash |  | 4 |
 | `tar` | typescript; shiro/commands/tar.ts | bash |  | 5 |
 | `tee` | typescript; shiro/commands/tee.ts | bash |  | 2 |
+| `tesseract` | typescript; shiro/commands/index.ts (catalog identity; candidate declarations listed) | integration-only |  | 0 |
 | `test` | typescript; shiro/commands/posix-test.ts | bash |  | 2 |
 | `then` | shell grammar; shiro/shell.ts | bash |  | 1 |
 | `time` | shell grammar; shiro/shell.ts | bash |  | 1 |

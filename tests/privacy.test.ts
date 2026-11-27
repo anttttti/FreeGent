@@ -80,6 +80,12 @@ describe('the Local-privacy CSP allows the pinned 7-Zip runtime (codex R100-06)'
         for (const u of urls) expect(sources.some(src => src.endsWith('/') && u.startsWith(src)), u).toBe(true);   // CSP: a path source is a prefix only with a trailing slash
         expect(sources.some(src => src === 'https://cdn.jsdelivr.net/npm/7z-wasm@')).toBe(false);
     });
+    it('lets the Local level reach each pinned processing program by its own directory, not the CDN host', async () => {
+        const { TOOLS } = await import('../exec-sandbox/tool-pins.js');
+        const sources = (sandboxCspMeta('local', 'https://app.test').match(/https:\/\/[^\s;]+/g) ?? []).filter(src => !src.startsWith('https://app.test'));
+        for (const t of Object.values(TOOLS)) for (const f of Object.values(t.files)) expect(sources.some(src => src.endsWith('/') && f.url.startsWith(src)), f.url).toBe(true);
+        expect(sources.filter(src => /^https:\/\/(cdn\.jsdelivr\.net|extensions\.duckdb\.org)\/?$/.test(src))).toEqual([]);   // never a whole host
+    });
 });
 
 describe('sandboxCspMeta / parsePrivacyLevel', () => {

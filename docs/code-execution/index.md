@@ -4,9 +4,9 @@ The agent runs code through the `execute_code` tool. Where that code runs depend
 
 | Language | Where it runs | Needs |
 |---|---|---|
-| JavaScript | A sandboxed frame in the browser, inside a Worker (a tight loop cannot freeze the page; Stop and a 60 s timeout end it) | nothing, always on |
+| JavaScript | A sandboxed frame in the browser, inside a Worker (a tight loop cannot freeze the page; Stop and a 60 s timeout end it) | nothing, always on; `tool()` loads [processing programs](browser.md#processing-programs) on demand |
 | Python | Pyodide (Python in WebAssembly) in the browser. Pure-Python packages install with `micropip`. | loads on first use or at startup |
-| Bash | **WASM** (default): a bash-compatible shell in the browser. 248 of the most common bash commands, builtins and keywords are implemented there: `grep`, `sed`, `awk`, `find`, `sort`, `tr` and similar. **Local**: real bash on your machine through the dev server. **None**: bash disabled. | The WebAssembly packages (29, such as `jq` and `lua`) download on first use and are cached in IndexedDB |
+| Bash | **WASM** (default): a bash-compatible shell in the browser. 248 of the most common bash commands, builtins and keywords are implemented there: `grep`, `sed`, `awk`, `find`, `sort`, `tr` and similar. **Local**: real bash on your machine through the dev server. **None**: bash disabled. | The WebAssembly packages (29, such as `jq` and `lua`) download on first use and are cached in IndexedDB; `ffmpeg`, `ffprobe`, `duckdb` and `tesseract` load on first use too |
 
 With the **Local** provider, Python also runs on your machine (unless Pyodide is loaded) with full coreutils, `npm` and `pip`. JavaScript still runs in the browser sandbox.
 

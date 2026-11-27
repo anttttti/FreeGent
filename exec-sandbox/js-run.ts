@@ -7,6 +7,7 @@ import { format, inspect } from 'node-inspect-extracted';
 import { createFakeBuffer } from '../shiro/node-compat/buffer';
 import { nodeConsole } from '../shiro/node-compat/console';
 import { createWorkspaceFs, path, WORKSPACE, type WorkspaceFileData } from './js-fs';
+import { loadTool } from './tools';
 
 /** Thrown by process.exit to stop the code; carries the exit status. */
 class ProcessExit { constructor(readonly code: number) {} }
@@ -109,8 +110,8 @@ export async function runJs(code: string, files: Record<string, WorkspaceFileDat
     host.addEventListener?.('unhandledrejection', onRejection); host.process?.on?.('unhandledRejection', onRejection);
     try {
         // eslint-disable-next-line no-new-func
-        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', 'clearTimeout', `return (async()=>{ ${code}\n})()`);
-        await fn(fs, require, con, process, Buffer, timeout, clearTimer);
+        const fn = new Function('fs', 'require', 'console', 'process', 'Buffer', 'setTimeout', 'clearTimeout', 'tool', `return (async()=>{ ${code}\n})()`);
+        await fn(fs, require, con, process, Buffer, timeout, clearTimer, loadTool);
         const end = Date.now() + 10000;
         for (let i = 0; i < 3 || (owned.size > 0 && exited === undefined && Date.now() < end); i++) await new Promise(r => setTimeout(r, 0));
         for (const h of owned) clearTimeout(h);   // what is still pending after the deadline does not fire into the next run

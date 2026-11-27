@@ -240,22 +240,22 @@ function execToolSpec() {
         const hasWasm    = p === 'wasm' && browserBashAvailable();
         if (hasWasm && hasPyodide) {
             description = 'Execute Bash, Python (Pyodide), or JavaScript (browser sandbox) in-page. ' +
-                `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ${_noReadBash}` +
+                `Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide), node, and ffmpeg, ffprobe, duckdb, tesseract — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ${_noReadBash}` +
                 'Python: workspace files pre-loaded, writes sync back. ' +
-                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
+                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages, but `await tool(name)` loads pdf-lib, mammoth, xlsx, jszip, sql.js, duckdb, tesseract or ffmpeg.';
             languages = ['bash', 'python', 'javascript'];
         } else if (hasWasm) {
             description = 'Execute Bash or JavaScript (browser sandbox) in-page. ' +
-                'Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide) and node — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ' +
-                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages.';
+                'Bash: a browser shell with bash syntax and built-in versions of the usual Unix tools (grep, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, curl), plus python3 (Pyodide), node, and ffmpeg, ffprobe, duckdb, tesseract — no apt, compilers or other native programs. bash starts in /workspace (the workspace); relative paths work. Files written under /workspace sync back automatically. Browser make recipes, workspace links, and ownership changes require explicitly selected native execution. ' +
+                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages, but `await tool(name)` loads pdf-lib, mammoth, xlsx, jszip, sql.js, duckdb, tesseract or ffmpeg.';
             languages = ['bash', 'javascript'];
         } else if (hasPyodide) {
             description = 'Execute Python (Pyodide) or JavaScript (browser sandbox) in-page. ' +
                 'Python: files pre-loaded, writes sync back. ' +
-                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages or require() of project modules.';
+                'JavaScript: virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages or require() of project modules, but `await tool(name)` loads pdf-lib, mammoth, xlsx, jszip, sql.js, duckdb, tesseract or ffmpeg.';
             languages = ['python', 'javascript'];
         } else {
-            description = 'Execute JavaScript (browser sandbox) in-page. Virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages. Written files sync back to workspace automatically.';
+            description = 'Execute JavaScript (browser sandbox) in-page. Virtual fs — use fs.readFileSync/writeFileSync/existsSync/readdirSync and require("path"); no npm packages, but `await tool(name)` loads pdf-lib, mammoth, xlsx, jszip, sql.js, duckdb, tesseract or ffmpeg. Written files sync back to workspace automatically.';
             languages = ['javascript'];
         }
     }

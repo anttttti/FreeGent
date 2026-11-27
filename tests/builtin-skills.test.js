@@ -242,3 +242,18 @@ describe('multimedia skills', () => {
         expect(img).not.toMatch(/HuggingFace|SDXL|FLUX\.1/);
     });
 });
+
+describe('data-files and ocr skills', () => {
+    const inputs = (text) => ({ roleName: null, lowerText: text, rawText: text, firstMsg: true, isTaskCompletion: false, turn: 1,
+        wsExts: new Set(), wsNames: new Set(), wsAllPaths: new Set(), msgMedia: new Set(), histTools: new Set() });
+    const fires = (name, text) => W.evaluateSkillTriggers(W.skillsRegistry, new Set(), inputs(text)).has(name);
+    it('fire on their keywords and say how to use the browser tools', () => {
+        expect(fires('data-files', 'query the csv with duckdb')).toBe(true);
+        expect(fires('data-files', 'update the database schema')).toBe(false);
+        expect(fires('ocr', 'ocr this scanned receipt')).toBe(true);
+        expect(fires('ocr', 'the scan of the page')).toBe(true);
+        expect(W.skillsRegistry.get('data-files').body_fn()).toMatch(/duckdb "select/);
+        expect(W.skillsRegistry.get('ocr').body_fn()).toMatch(/tesseract page\.png stdout/);
+        expect(W.skillsRegistry.get('video').body).toMatch(/strict unofficial/);
+    });
+});

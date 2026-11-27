@@ -1192,6 +1192,22 @@
       "migrationAccepted": false
     },
     {
+      "name": "duckdb",
+      "route": "typescript",
+      "description": "SQL on CSV, JSON and Parquet files (DuckDB WebAssembly; downloaded on first use)",
+      "parityScope": "integration-only",
+      "requirements": [
+        "Worker",
+        "network (first use)"
+      ],
+      "declarations": [],
+      "owner": "shiro/commands/index.ts (catalog identity; candidate declarations listed)",
+      "builtin": false,
+      "keyword": false,
+      "cases": [],
+      "migrationAccepted": false
+    },
+    {
       "name": "echo",
       "route": "typescript",
       "description": "Display text",
@@ -1474,6 +1490,38 @@
       "cases": [
         "coverage-fc-01.sh"
       ],
+      "migrationAccepted": false
+    },
+    {
+      "name": "ffmpeg",
+      "route": "typescript",
+      "description": "Audio and video conversion (ffmpeg 0.12 WebAssembly, single thread; downloaded on first use)",
+      "parityScope": "integration-only",
+      "requirements": [
+        "Worker",
+        "network (first use)"
+      ],
+      "declarations": [],
+      "owner": "shiro/commands/index.ts (catalog identity; candidate declarations listed)",
+      "builtin": false,
+      "keyword": false,
+      "cases": [],
+      "migrationAccepted": false
+    },
+    {
+      "name": "ffprobe",
+      "route": "typescript",
+      "description": "Media file information (ffprobe, WebAssembly)",
+      "parityScope": "integration-only",
+      "requirements": [
+        "Worker",
+        "network (first use)"
+      ],
+      "declarations": [],
+      "owner": "shiro/commands/index.ts (catalog identity; candidate declarations listed)",
+      "builtin": false,
+      "keyword": false,
+      "cases": [],
       "migrationAccepted": false
     },
     {
@@ -4173,6 +4221,22 @@
       "migrationAccepted": false
     },
     {
+      "name": "tesseract",
+      "route": "typescript",
+      "description": "Text from an image (Tesseract OCR WebAssembly, English; downloaded on first use)",
+      "parityScope": "integration-only",
+      "requirements": [
+        "Worker",
+        "network (first use)"
+      ],
+      "declarations": [],
+      "owner": "shiro/commands/index.ts (catalog identity; candidate declarations listed)",
+      "builtin": false,
+      "keyword": false,
+      "cases": [],
+      "migrationAccepted": false
+    },
+    {
       "name": "test",
       "route": "typescript",
       "description": "Evaluate conditional expression",
@@ -5816,6 +5880,7 @@
         "shiro/commands/line-endings.ts",
         "shiro/commands/local.ts",
         "shiro/commands/ls.ts",
+        "shiro/commands/media-tools.ts",
         "shiro/commands/mkdir.ts",
         "shiro/commands/mv.ts",
         "shiro/commands/nl.ts",
@@ -6030,6 +6095,7 @@
         "shiro/commands/jq.ts",
         "shiro/commands/jseval.ts",
         "shiro/commands/jseval/node-cmd.ts",
+        "shiro/commands/media-tools.ts",
         "shiro/commands/mktemp.ts",
         "shiro/commands/npm.ts",
         "shiro/commands/npx.ts",
@@ -6111,6 +6177,7 @@
         "shiro/commands/local.ts",
         "shiro/commands/ls.ts",
         "shiro/commands/make.ts",
+        "shiro/commands/media-tools.ts",
         "shiro/commands/mkdir.ts",
         "shiro/commands/mktemp.ts",
         "shiro/commands/mv.ts",
@@ -6353,6 +6420,18 @@
       ],
       "referencedBy": [
         "shiro/commands/unix.ts"
+      ]
+    },
+    {
+      "path": "shiro/commands/media-tools.ts",
+      "reachable": true,
+      "imports": [
+        "exec-sandbox/tools.ts",
+        "shiro/commands/flags.ts",
+        "shiro/commands/index.ts"
+      ],
+      "referencedBy": [
+        "shiro/commands/index.ts"
       ]
     },
     {
@@ -10095,7 +10174,7 @@
     "exec-sandbox/channel.ts": "fa0fdad0dc43bb4386dce6b61b641dd676ab47dbde79245eb3ecda70558ba7bf",
     "exec-sandbox/entry.ts": "919e90f80fe0558b5112c1c9d144675ed0b4ab35607a21378463f1386150b263",
     "headless-runner.ts": "3646da4a863b0c14d5aacb7b98655869aab0fc20185170b22ecc2f87e81cfa22",
-    "pyodide-run.ts": "11e10aea88d656f7d191e20cca32eb11b26c54e4471cf65d298f42f597db9905",
+    "pyodide-run.ts": "a4c57b673fe8f6d1a308800691347f7994f3008144e8c820a61bc3e2c6ad2e41",
     "shiro/commands/awk.ts": "d71093a1443185ac403747a9ec1e496c5b455c73dd0a7fafc6dc7a954507c5f4",
     "shiro/commands/base32.ts": "23dd6ad17b2840f7f97830e988df278f0e227549de016f5b6a61f07d9967daf4",
     "shiro/commands/base64.ts": "e4f09bc8df055a363970badcdaf69bc6d7d83920afb7926dbdf61765cd3e770a",
@@ -10153,7 +10232,7 @@
     "shiro/commands/iconv.ts": "50453fb2a32558f0ac07ddedc7292ad95bcda7c31044cb83ab87eff8e273db28",
     "shiro/commands/id.ts": "b77d46ad2e5d6e48b4c30190140c18cc820931c45be34ac4e03213f303360ef0",
     "shiro/commands/if.ts": "57c0933a60c15899377024c39b66a5b1b9ec89aa228231605546227e1099c3a8",
-    "shiro/commands/index.ts": "5b8c7288a148e4499c15e5507ec15498f7dcb1364c10a475603b463661e09b24",
+    "shiro/commands/index.ts": "2fcecca93c94564bd59780bf21c51d9766f8318e4407a092bae83ccffd137b74",
     "shiro/commands/install.ts": "a7047d18facac353ddb1a5b6d891e1f4af149ffaf5d37bf517410e0f81970064",
     "shiro/commands/join.ts": "1669d26cd6391b23ef59ef4825e6f84726cf07778c37a70e126f8cb299abcaee",
     "shiro/commands/jq.ts": "c27884380caef92dd4cc9d32fccdc31db2c63f5db75ae452a9a7d8e3d7042037",
@@ -10169,6 +10248,7 @@
     "shiro/commands/ls.ts": "8eed5056889fe6f9f0c15074a6d9c38b84c85ac56685e80719125afe0e6cbfce",
     "shiro/commands/make.ts": "1e42d0dec7f90185b7e6ce967d71a027f59efdfe7c31225c7af7193a55dabc03",
     "shiro/commands/md5sum.ts": "5d25692b0d9ac9f5657522b0a9ac63491ebcc599b06c5f887ed0b7712cca50a9",
+    "shiro/commands/media-tools.ts": "f6e060b02f5a1aa3bb5fa202ec163dc11060e6d327fc793d4294e62d9bfa4b37",
     "shiro/commands/mkdir.ts": "e0f31f1bfb61ef42ee90b54e1b4cedca8dc42db2d1c3ea52f6d2264170bda3e5",
     "shiro/commands/mktemp.ts": "46b02db9ec5fa3c678bf3ce8e10c671eb5b6d93763c42da2ed96f5cd2b95155b",
     "shiro/commands/mv.ts": "ef94dbcc097982214adeb349f06d24c88bb80d6f5ea9fa3502346844007734a0",

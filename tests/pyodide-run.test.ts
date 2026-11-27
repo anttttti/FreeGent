@@ -1,7 +1,7 @@
 // pyodide-run.ts on a real Pyodide: the program runs from its exact source, with sys.path as
 // CPython sets it. (Output, exit status and file sync are compared with CPython by
 // scripts/exec-diff.sh.)
-import { runInPyodide } from '../pyodide-run';
+import { runInPyodide, micropipPlan } from '../pyodide-run';
 import { loadNodePyodide } from './parity-utils';
 
 let py: any;
@@ -40,5 +40,19 @@ describe('pyodide-run', () => {
             'print(helper.VALUE)',
         ].join('\n'), files);
         expect(r.stdout).toBe("'' True False\n7\n");
+    });
+});
+
+describe('imports that need micropip', () => {
+    it('are installed under their distribution name and pin, and the ones with no Pyodide build get a note instead of a failing install', () => {
+        expect(micropipPlan(['docx', 'pptx', 'reportlab', 'pypdf', 'duckdb', 'img2pdf'])).toEqual({
+            install: ['python-docx', 'python-pptx', 'reportlab==4.4.4', 'pypdf'],
+            notes: [expect.stringContaining('duckdb command in bash'), expect.stringContaining('Pillow')],
+        });
+    });
+    it('says what to use instead when such a package is imported', async () => {
+        const r = await run('import duckdb');
+        expect(r.exit_code).toBe(1);
+        expect(r.stdout + r.stderr).toMatch(/duckdb has no Pyodide build/);
     });
 });

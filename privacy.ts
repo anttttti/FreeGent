@@ -1,5 +1,5 @@
 // privacy.ts — FreeGent: the network privacy level (Settings → Privacy) and the rules that follow from it.
-// Pure functions, no imports, so proxy.ts, config.ts, the sandbox hosts and the tests can all use them.
+// Pure functions, no imports but one table of pinned CDN files (data only), so proxy.ts, config.ts, the sandbox hosts and the tests can all use them.
 //
 //   routed    model and web requests go through the hosted Cloudflare Worker on a static host (freegent.ai,
 //             *.github.io, *.pages.dev), or through the local server's /api/proxy.
@@ -16,6 +16,8 @@
 //
 // Libraries and runtimes that the page loads with <script> or import() (jsdelivr, esm.sh) are not fetch calls
 // and load at every level; the browser caches them afterwards.
+
+import { TOOL_CDN_DIRS } from './exec-sandbox/tool-pins.js';
 
 type PrivacyLevel = 'routed' | 'provider' | 'local';
 const PRIVACY_LEVEL_KEY = 'fg_privacy_level';
@@ -128,9 +130,9 @@ export function providerBlockedByPrivacy(provider: string, level: PrivacyLevel, 
 
 /** `<meta>` CSP for sandboxed frames: at the "local" level their own fetch/XHR/WebSocket may reach only this
  *  machine (plus the CDN that serves the runtimes). Empty at the other levels. */
-// The runtimes the sandbox loads from the CDN: Pyodide and the 7-Zip WASM build. Only these paths, not the whole host: with all of
+// The runtimes the sandbox loads from the CDN: Pyodide, the 7-Zip WASM build and the pinned processing programs (exec-sandbox/tool-pins.ts: the directory of each file). Only these paths, not the whole host: with all of
 // cdn.jsdelivr.net allowed, code in the sandbox could send workspace data out in the path or query of any request there (codex R269).
-const _RUNTIME_CDN = ['https://cdn.jsdelivr.net/pyodide/', 'https://cdn.jsdelivr.net/npm/7z-wasm@1.2.0/'];   // a CSP path source matches a directory only when it ends in `/`: the version directory of the pinned build (codex R100-06)
+const _RUNTIME_CDN = ['https://cdn.jsdelivr.net/pyodide/', 'https://cdn.jsdelivr.net/npm/7z-wasm@1.2.0/', ...TOOL_CDN_DIRS];   // a CSP path source matches a directory only when it ends in `/`: the version directory of the pinned build (codex R100-06)
 const _LOCAL_HOSTS = 'http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*';
 export function sandboxCspMeta(level: PrivacyLevel = getPrivacyLevel(), pageOrigin: string = (() => { try { return location.origin; } catch { return ''; } })()): string {
     if (level !== 'local') return '';

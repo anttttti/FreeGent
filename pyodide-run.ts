@@ -141,6 +141,31 @@ async def _fg_exec(src):
  * /workspace is emptied afterwards: the page's workspace is the only lasting copy. Callers run
  * one at a time (runs share /workspace).
  */
+// An import that Pyodide has no package for goes to micropip under its distribution name. These differ from the import name or need a pin
+// (tested against Pyodide 0.28.3: the newest reportlab needs Pillow 13, Pyodide ships 11.3), and some packages have no build for it at all.
+const PIP_NAMES: Record<string, string> = {
+    docx: 'python-docx', pptx: 'python-pptx', pdfminer: 'pdfminer.six', reportlab: 'reportlab==4.4.4',
+};
+const NO_BUILD: Record<string, string> = {
+    duckdb: 'duckdb has no Pyodide build: use the duckdb command in bash, or `await tool("duckdb")` in JavaScript',
+    polars: 'polars has no Pyodide build: use pandas',
+    pyarrow: 'pyarrow is not in Pyodide: use pandas, or the duckdb command in bash for Parquet',
+    pypdfium2: 'pypdfium2 has no Pyodide build: use pymupdf or pypdf',
+    onnxruntime: 'onnxruntime has no Pyodide build',
+    img2pdf: 'img2pdf has no Pyodide build: use Pillow (Image.save("out.pdf")) or pymupdf',
+    fpdf: 'fpdf2 fails to import here (no HTTPS handler): use reportlab or pymupdf',
+    pikepdf: 'pikepdf has no Pyodide build: use pypdf or pymupdf',
+    moviepy: 'moviepy needs ffmpeg: use the ffmpeg command in bash',
+    pydub: 'pydub needs ffmpeg: use the ffmpeg command in bash',
+    pytesseract: 'pytesseract needs a binary: use the tesseract command in bash',
+};
+/** What micropip should install for the imports that are missing, and notes for the ones nothing can install. */
+export function micropipPlan(missing: string[]): { install: string[]; notes: string[] } {
+    const install: string[] = [], notes: string[] = [];
+    for (const m of missing) { if (NO_BUILD[m]) notes.push(NO_BUILD[m]); else install.push(PIP_NAMES[m] ?? m); }
+    return { install, notes };
+}
+
 export function runInPyodide(py:any, input:{code:string; files:Record<string,string>; filepath?:string}): Promise<RunResult> {
     return withRuntimeLock(py,() => runIsolatedInPyodide(py,input));
 }
@@ -229,8 +254,10 @@ def _is_local(name):
     return False
 [m for m in ${JSON.stringify(imports)} if importlib.util.find_spec(m) is None and not _is_local(m)]
 `);
-                const toInstall = missing?.toJs ? missing.toJs() : [];
+                const plan = micropipPlan(missing?.toJs ? missing.toJs() : []);
                 missing?.destroy?.();
+                const toInstall = plan.install;
+                notes += plan.notes.map(n => `Note: ${n}\n`).join('');
                 if (toInstall.length > 0) {
                     try {
                         await py.runPythonAsync(`import micropip\nawait micropip.install(${JSON.stringify(toInstall)})`);

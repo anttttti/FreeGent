@@ -351,6 +351,10 @@ const BUILTIN_RULES = [
 
 You have no tool that listens or speaks. FreeGent itself does both for the user: the microphone button types what they say (speech input), and **Settings → Multimedia** turns on spoken replies and chooses the speech models. For "read this aloud" or "let me dictate", point them there instead of pretending to do it.
 
+### Converting and inspecting files
+
+bash \`ffmpeg\` and \`ffprobe\` (downloaded on first use): \`ffmpeg -y -i in.mp4 -vn -ar 16000 -ac 1 out.wav\` extracts speech audio; \`ffprobe -v error -show_entries format=duration:stream=codec_name -of json in.m4a\` reports duration and codecs; \`-ss 10 -t 5\` cuts. Output files are written to the workspace by the path given. Encoders that work: mp3, aac, opus, vorbis, flac, pcm. Python reads and writes WAV, FLAC and OGG with \`soundfile\`; JavaScript: \`await tool("ffmpeg")\` → \`run(args, {"in.wav": bytes})\` returns \`{code, files, stderr}\`.
+
 ### Audio Input
 
 If an audio file is attached to this message:
@@ -379,6 +383,10 @@ Be explicit about what you can and cannot perceive from the file.`
 
 You have no tool that generates or edits video files. Do not claim to have made a video, and do not invent a file name for one. For a request to make one, say so and offer what you can do: a storyboard or script, still frames with \`generate_image\`, or an animation built in code (SVG/CSS animation or canvas in an HTML page, checked with \`check_page\`).
 
+### Converting and inspecting files
+
+bash \`ffmpeg\` and \`ffprobe\` (downloaded on first use, single thread: keep to short clips). Frames for a model that cannot see video: \`ffmpeg -y -i in.mp4 -vf fps=1,scale=640:-1 f%03d.png\`. Others: \`-vn\` audio only, \`-t 5 -vf fps=10,scale=320:-1 out.gif\`, \`-ss 3 -t 4 -c copy cut.mp4\`. Encoders that work: H.264 (\`libx264\`), VP8, MPEG-4, Theora, GIF, PNG, WebP. **JPEG needs \`-strict unofficial\`** (it hangs without); VP9 crashes; HEVC and AV1 are not available. \`await tool("ffmpeg")\` does the same in JavaScript: \`run(args, {"in.mp4": bytes})\` returns \`{code, files, stderr}\`.
+
 ### Video Input
 
 If a video is attached to this message:
@@ -401,6 +409,40 @@ Extracted text does not preserve scanned images, page layout, or every table bou
 If extraction failed or no text was found, explain the limitation rather than claiming
 that you read the document. Use the available execution tools for additional extraction,
 or ask for a readable text or image version when those tools cannot process it.`
+    },
+    {
+        name: 'data-files',
+        type: 'rule',
+        description: 'SQL on CSV, JSON, Parquet and SQLite files: DuckDB and SQLite in the browser sandbox.',
+        exclude_mode: 'container',
+        trigger: 'duckdb, parquet, sqlite, sql on csv, query the csv, query csv, query the data, read_csv, sql query on the file',
+        trigger_on_filetype: '.parquet, .sqlite, .sqlite3, .duckdb',
+        body: '',
+        body_fn: () => runtime.hasNativeExec
+            ? '## SQL on files\n\n`pip3 install duckdb` for SQL on CSV, JSON and Parquet; `sqlite3` (Python stdlib or the CLI) for .sqlite files.'
+            : `## SQL on files (browser)
+
+- **bash**: \`duckdb "select region, sum(x) from 'sales.csv' group by 1"\` reads CSV, JSON and Parquet by file name (\`-csv\` or \`-json\` changes the output); \`duckdb "copy (select …) to 'out.parquet'"\` writes a file. Each call starts an empty database, so create tables and query them in the same call.
+- **SQLite**: \`sqlite3 db.sqlite "…"\` in bash is SQLite 3.26 (no RETURNING, no newer JSON functions); Python's \`sqlite3\` is 3.39, use it for newer syntax.
+- **JavaScript**: \`const db = await tool("duckdb"); await db.registerFile("a.csv", new Uint8Array(fs.readFileSync("a.csv"))); const rows = await db.query("select …")\` returns plain objects; \`await db.readFile("out.parquet")\` gives the bytes of a file written with COPY. \`const SQL = await tool("sql.js"); const d = new SQL.Database(bytes)\` opens a .sqlite file, \`d.export()\` returns its bytes.
+- **Python**: \`sqlite3\` and pandas; duckdb, polars and pyarrow are not available (use the bash command for Parquet).
+- A binary file over about 7 MB is not copied into Python and JavaScript runs; bash reads it directly.`,
+    },
+    {
+        name: 'ocr',
+        type: 'rule',
+        description: 'Text from images and scanned documents: tesseract in the browser sandbox.',
+        exclude_mode: 'container',
+        trigger: 'ocr, scanned, scan of, text in the image, text from the image, text in the screenshot, text from a screenshot, read the text in, handwriting, handwritten',
+        body: '',
+        body_fn: () => runtime.hasNativeExec
+            ? '## OCR\n\n`tesseract image.png stdout` if the program is installed (`which tesseract`).'
+            : `## OCR (browser)
+
+- bash: \`tesseract page.png stdout\`, or \`tesseract page.png out\` which writes out.txt. English only; PNG, JPEG, BMP, GIF, WebP. About 7 MB download on first use.
+- JavaScript: \`const t = await tool("tesseract"); const {text, confidence} = await t.recognize(new Uint8Array(fs.readFileSync("page.png")))\`.
+- A scanned PDF: render the pages first, \`pymupdf\` in Python: \`page.get_pixmap(dpi=200).save("p1.png")\`, then OCR the PNGs. Use 200–300 dpi; small, skewed or low-contrast text reads badly (check \`confidence\`).
+- If the result is empty or garbled, say so; do not fill in text you did not get.`,
     },
     {
         name: 'sql',
@@ -683,8 +725,9 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - All workspace files are pre-loaded automatically — \`open("data.csv")\` or \`open("local/data.csv")\` works directly without any prior write_file step
 - Files written during execution sync back to the workspace automatically
 - Top-level \`await\` supported
-- Only these packages auto-load from imports: numpy, pandas, scipy, matplotlib, Pillow, scikit-learn — do not assume any other package is available
-- Other packages: \`import micropip; await micropip.install(["pkg-name"])\`
+- Imports of Pyodide's own packages load by themselves: numpy, pandas, scipy, scikit-learn, matplotlib, Pillow, opencv (\`cv2\`), pymupdf, lxml, bs4, soundfile, sympy, networkx, sqlalchemy, xarray and more
+- Pure-Python packages install on import (micropip, a few seconds): \`docx\` (python-docx), openpyxl, pypdf, \`pptx\`, reportlab, xlsxwriter, mutagen. Others: \`import micropip; await micropip.install(["pkg-name"])\`
+- Not available: duckdb, polars, pyarrow, pypdfium2, fpdf2, onnxruntime. An import of one prints what to use instead (ffmpeg, duckdb and tesseract are bash commands)
 - No \`subprocess\` / \`os.system\` — use \`execute_code(language="bash", ...)\` for shell commands
 - Network: \`from pyodide.http import pyfetch\` — \`resp = await pyfetch(url)\`, then \`await resp.string()\` / \`await resp.json()\` / \`await resp.bytes()\`. Sites that refuse browser requests are fetched through FreeGent's proxy (plain GET only, no custom headers). \`urllib\` and \`socket\` don't work`);
             const pyRules = [
@@ -740,6 +783,7 @@ fetch_url({ url: "https://api.notion.com/v1/blocks/PAGE_ID/children", method: "P
 - Runs in the browser, isolated from the page, starting in the workspace directory (\`/workspace\`). Use relative paths (\`src/app.js\`): the same path works in read_file, write_file, check_page and the preview. Writes sync back automatically
 - Files outside the workspace (\`/tmp\`, \`/home/user\`) exist only in this shell
 - Unix tools built in: grep, rg, sed, awk, find, sort, uniq, cut, tr, head, tail, wc, xargs, diff, jq, tar, gzip, etc. \`python3\`/\`pip\` are Pyodide; \`node\` runs JavaScript; \`npm install\` works (writes node_modules into the workspace)
+- Also built in, downloaded on first use: \`ffmpeg\`, \`ffprobe\`, \`duckdb\` (SQL on CSV, JSON, Parquet), \`tesseract\` (OCR), \`7z\`, \`sqlite3\`; details in the audio, video, data-files, ocr and documents instructions
 - Not available: \`git\`, compilers
 - **Network:** \`curl\` and \`wget\` work. Requests go out directly, so sites that allow browser requests (npm, PyPI, raw.githubusercontent.com, many public APIs) support any method, headers and body. Other sites are fetched through FreeGent's proxy: plain GET only, without custom headers. Binary downloads need \`-o FILE\`. To read a web page or search, \`fetch_url\` / web search are usually better`);
             if (!hasNative && !hasLocal && !hasWasm) parts.push('*Bash execution is not available in this environment.*');
@@ -881,38 +925,14 @@ print(base64.b64encode(buf.getvalue()).decode())
 **Key rule:** Never \`write_file\` with raw text for binary formats (.docx, .xlsx, .pdf). Always encode as base64.`);
             }
 
-            if (hasPyodide && hasWrite) {
-                parts.push(`### Writing / Modifying — Pyodide (browser)
+            if (hasPyodide) {
+                parts.push(`### Writing / modifying — Pyodide (browser)
 
-Files are pre-loaded at \`/workspace/<path>\`. Use \`await micropip.install([...])\` for packages.
-
-#### Modify a .docx
-\`\`\`python
-import base64, io, micropip
-await micropip.install(['python-docx'])
-from docx import Document
-
-doc = Document('/workspace/report.docx')
-for para in doc.paragraphs:
-    if 'old text' in para.text:
-        para.text = para.text.replace('old text', 'new text')
-buf = io.BytesIO(); doc.save(buf)
-print(base64.b64encode(buf.getvalue()).decode())
-\`\`\`
-Then: \`write_file(path="report.docx", content=<base64 output>, encoding="base64")\`
-
-#### Modify a .xlsx
-\`\`\`python
-import base64, io, micropip
-await micropip.install(['openpyxl'])
-from openpyxl import load_workbook
-
-wb = load_workbook('/workspace/data.xlsx'); ws = wb.active; ws['A1'] = 'Updated'
-buf = io.BytesIO(); wb.save(buf)
-print(base64.b64encode(buf.getvalue()).decode())
-\`\`\`
-
-**Key rule:** Never \`write_file\` with raw text for binary formats. Always encode as base64.`);
+Files are at \`/workspace/<path>\`; what you save there syncs back (no base64, no write_file). Imports install themselves.
+- **PDF**: \`import pymupdf\` — \`page.get_text()\`, \`page.get_pixmap(dpi=200).save("/workspace/p1.png")\`, \`doc.insert_pdf(other)\`, \`doc.save(path)\`; \`pypdf\` merges and splits. To make one use \`reportlab\` (fpdf2 does not import here).
+- **Word**: \`docx\` (python-docx): \`Document(path)\`, \`.paragraphs\`, \`.tables\`, \`.save(path)\`. **Excel**: \`openpyxl\` (formulas are stored, not calculated) or \`pandas.read_excel\`. **PowerPoint**: \`pptx\`.
+- No LibreOffice or pandoc: convert by reading with one library and writing with another. A scanned PDF has no text: render its pages with pymupdf and OCR the PNGs (\`tesseract\` in bash, English only).
+- JavaScript (browser): \`await tool("pdf-lib")\` creates, merges and splits PDFs (no text extraction); \`await tool("mammoth")\` reads .docx (\`extractRawText({arrayBuffer})\`); \`await tool("xlsx")\` reads and writes .xlsx and .csv; \`await tool("jszip")\` opens any Office file as a zip. Pass bytes as \`new Uint8Array(fs.readFileSync(path))\`.`);
             }
 
             if (hasLocal && hasWrite) {
