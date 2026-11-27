@@ -2,18 +2,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const ffmpegCalls: any[] = [];
-const duck = { registered: [] as string[], queries: [] as string[], files: new Map<string, Uint8Array>() };
+const duck = { registered: [] as string[], queries: [] as string[], files: new Map<string, Uint8Array>(), opened: 0, closed: 0 };
 vi.mock('../exec-sandbox/tools', () => ({
     runFfmpeg: async (args: string[], files: Record<string, Uint8Array>, opts: any) => {
         ffmpegCalls.push({ args, files: Object.keys(files), opts });
         return opts.probe ? { code: 0, files: {}, stdout: '{"streams":[]}', stderr: '' }
             : { code: 0, files: { 'work/out.wav': new Uint8Array([1, 2, 3]) }, stdout: '', stderr: 'size=1kB' };
     },
-    loadTool: async (name: string) => name === 'duckdb' ? {
+    openDuckdb: async () => { duck.opened++; return {
         registerFile: async (n: string) => { duck.registered.push(n); },
-        query: async (sql: string) => { duck.queries.push(sql); return /^select/i.test(sql) ? [{ a: 1, b: 'x,y' }, { a: 22, b: null }] : [{ Count: 2 }]; },
+        query: async (sql: string) => { duck.queries.push(sql); return /^select/i.test(sql) ? [{ a: 1, 'b,c': 'x,y' }, { a: 22, 'b,c': null }] : [{ Count: 2 }]; },
         readFile: async (n: string) => { const f = duck.files.get(n); if (!f) throw new Error('no such file'); return f; },
-    } : { recognize: async () => ({ text: 'HELLO\n', confidence: 90 }) },
+        close: async () => { duck.closed++; },
+    }; },
+    loadTool: async () => ({ recognize: async () => ({ text: 'HELLO\n', confidence: 90 }) }),
 }));
 import { mediaToolCmds } from '../shiro/commands/media-tools';
 
@@ -31,7 +33,7 @@ function ctxWith(args: string[], files: Record<string, Uint8Array | string> = {}
     return { ctx: { args, fs, cwd: '/work', env: {}, stdin, stdout: '', stderr: '', shell: {} as any }, store };
 }
 
-beforeEach(() => { ffmpegCalls.length = 0; duck.registered.length = 0; duck.queries.length = 0; duck.files.clear(); });
+beforeEach(() => { ffmpegCalls.length = 0; duck.registered.length = 0; duck.queries.length = 0; duck.files.clear(); duck.opened = duck.closed = 0; });
 
 describe('ffmpeg and ffprobe commands', () => {
     it('stage the input by its path, name the output by its path, and write what the run produced', async () => {
@@ -60,10 +62,18 @@ describe('duckdb command', () => {
         expect(ctx.stdout).toContain('a  | b');
         const csv = ctxWith(['-csv', "select a, b from 'x.csv'"], { '/work/x.csv': 'a,b\n' });
         await cmd('duckdb').exec(csv.ctx);
-        expect(csv.ctx.stdout).toBe('a,b\n1,"x,y"\n22,\n');
+        expect(csv.ctx.stdout).toBe('a,"b,c"\n1,"x,y"\n22,\n');   // a header with a comma is quoted like a value
         const json = ctxWith(['-json', 'select 1']);
         await cmd('duckdb').exec(json.ctx);
-        expect(JSON.parse(json.ctx.stdout)).toEqual([{ a: 1, b: 'x,y' }, { a: 22, b: null }]);
+        expect(JSON.parse(json.ctx.stdout)).toEqual([{ a: 1, 'b,c': 'x,y' }, { a: 22, 'b,c': null }]);
+        expect([duck.opened, duck.closed]).toEqual([3, 3]);   // a database per command, each closed
+    });
+    it('fails when the file a COPY wrote cannot be saved, instead of reporting success', async () => {
+        duck.files.set('o.parquet', new Uint8Array([7]));
+        const { ctx } = ctxWith(["copy (select 1) to 'o.parquet' (format parquet)"]);
+        ctx.fs.writeFile = async () => { throw new Error('EISDIR'); };
+        expect(await cmd('duckdb').exec(ctx)).toBe(1);
+        expect(ctx.stderr).toMatch(/EISDIR/);
     });
     it('writes the file a COPY … TO statement made', async () => {
         duck.files.set('o.parquet', new Uint8Array([7, 7]));

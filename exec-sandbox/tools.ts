@@ -59,7 +59,8 @@ const jsonSafe = (v: any): any => {
   return v;
 };
 
-async function duckdb(): Promise<any> {
+/** A new DuckDB (its own Worker and empty database); `close()` ends it. `tool("duckdb")` shares one per run, the shell command opens one per command. */
+export async function openDuckdb(): Promise<any> {
   if (typeof Worker !== 'function') throw new Error('duckdb needs a browser with Workers');
   const e = entry('duckdb');
   // In its own Worker (the blocking build traps on COPY … TO when it runs on a frame's main thread). Its one external, Arrow, is the second verified file.
@@ -82,7 +83,7 @@ onmessage=async({data})=>{const {id,op}=data;try{let out,tr=[];
   const pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
   worker.onmessage = ({ data }) => { const p = pending.get(data.id); pending.delete(data.id); if (p) data.error ? p.rej(new Error(data.error)) : p.res(data.out); };
   worker.onerror = ev => { for (const p of pending.values()) p.rej(new Error(String(ev.message || 'duckdb worker error'))); pending.clear(); };
-  const loaded = new Set<string>();
+  const loaded = new Map<string, Promise<void>>();
   const rpc = (msg: Record<string, any>, transfer: Transferable[] = []): Promise<any> =>
     new Promise((res, rej) => { const id = ++n; pending.set(id, { res, rej }); worker.postMessage({ id, ...msg }, transfer); });
   const wasm = await toolBytes(e.files.wasm);
@@ -91,13 +92,16 @@ onmessage=async({data})=>{const {id,op}=data;try{let out,tr=[];
   return {
     /** Runs one statement; rows come back as plain objects (BigInt as number, or a string when it does not fit). */
     async query(sql: string): Promise<Record<string, any>[]> {
-      for (const ext of ['parquet', 'json']) {
-        if (!loaded.has(ext) && new RegExp(`${ext}|\\.${ext}\\b`, 'i').test(sql)) {
-          loaded.add(ext);
-          const b = (await toolBytes(e.files[ext])).slice(0);
-          await rpc({ op: 'ext', name: `${ext}.duckdb_extension.wasm`, bytes: new Uint8Array(b) }, [b]);
+      // One load per extension, awaited by every query that needs it; a failed load is dropped so the next query tries again.
+      await Promise.all(['parquet', 'json'].filter(ext => new RegExp(ext, 'i').test(sql)).map(ext => {
+        let p = loaded.get(ext);
+        if (!p) {
+          p = (async () => { const b = (await toolBytes(e.files[ext])).slice(0); await rpc({ op: 'ext', name: `${ext}.duckdb_extension.wasm`, bytes: new Uint8Array(b) }, [b]); })();
+          p.catch(() => loaded.delete(ext));
+          loaded.set(ext, p);
         }
-      }
+        return p;
+      }));
       return rpc({ op: 'query', sql });
     },
     /** Makes bytes readable by name in SQL (read_csv('a.csv'), read_parquet('a.parquet')). */
@@ -174,7 +178,7 @@ export function loadTool(name: string): Promise<any> {
         case 'xlsx':    return umd(await toolText(entry(name).files.js));
         case 'jszip':   return umd(await toolText(entry(name).files.js));
         case 'sql.js':  return sqlJs();
-        case 'duckdb':  return duckdb();
+        case 'duckdb':  return openDuckdb();
         case 'tesseract': return tesseract();
         case 'ffmpeg':  return { run: (args: string[], files: Files = {}) => runFfmpeg(args, files), probe: (args: string[], files: Files = {}) => runFfmpeg(args, files, { probe: true }) };
         default: return entry(name);   // throws with the list

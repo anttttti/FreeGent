@@ -3,7 +3,7 @@
 
 import type { Command, CommandContext } from './index';
 import { readOperandBytes } from './flags';
-import { loadTool, runFfmpeg } from '../../exec-sandbox/tools';
+import { loadTool, openDuckdb, runFfmpeg } from '../../exec-sandbox/tools';
 
 const fail = (ctx: CommandContext, name: string, e: any): number => { ctx.stderr += `${name}: ${e?.message || e}\n`; return 1; };
 const isFile = async (ctx: CommandContext, p: string): Promise<boolean> => { try { return (await ctx.fs.stat(p)).isFile(); } catch { return false; } };
@@ -54,7 +54,7 @@ function render(rows: Record<string, any>[], mode: 'table' | 'csv' | 'json'): st
   if (mode === 'json') return JSON.stringify(rows) + '\n';
   if (!rows.length) return '';
   const cols = Object.keys(rows[0]);
-  if (mode === 'csv') return [cols.join(','), ...rows.map(r => cols.map(c => csvCell(r[c])).join(','))].join('\n') + '\n';
+  if (mode === 'csv') return [cols.map(csvCell).join(','), ...rows.map(r => cols.map(c => csvCell(r[c])).join(','))].join('\n') + '\n';
   const w = cols.map(c => Math.max(c.length, ...rows.map(r => cell(r[c]).length)));
   const line = (cells: string[]) => cells.map((t, i) => t.padEnd(w[i])).join(' | ').trimEnd();
   return [line(cols), w.map(n => '-'.repeat(n)).join('-+-'), ...rows.map(r => line(cols.map(c => cell(r[c]))))].join('\n') + '\n';
@@ -70,8 +70,9 @@ async function duckdb(ctx: CommandContext): Promise<number> {
   }
   if (!sql.trim()) sql = ctx.stdin;
   if (!sql.trim()) { ctx.stderr += 'usage: duckdb [-csv|-json] "SELECT … FROM \'data.csv\'"   (files are read by name; COPY … TO \'out.parquet\' writes one)\n'; return 1; }
+  let db: any;
   try {
-    const db = await loadTool('duckdb');
+    db = await openDuckdb();   // one database per command: tables do not outlive it
     // A quoted name that is a workspace file is made readable under the name as written.
     for (const m of sql.matchAll(/'([^']+)'/g)) {
       const abs = ctx.fs.resolvePath(m[1], ctx.cwd);
@@ -80,11 +81,14 @@ async function duckdb(ctx: CommandContext): Promise<number> {
     let outText = '';
     for (const st of splitStatements(sql)) outText += render(await db.query(st), mode);
     for (const m of sql.matchAll(/\bTO\s+'([^']+)'/gi)) {
-      try { await writeOut(ctx, ctx.fs.resolvePath(m[1], ctx.cwd), await db.readFile(m[1])); } catch { /* the statement wrote no such file */ }
+      let bytes: Uint8Array;
+      try { bytes = await db.readFile(m[1]); } catch { continue; }   // the statement wrote no such file
+      await writeOut(ctx, ctx.fs.resolvePath(m[1], ctx.cwd), bytes);   // a failed write is the command's failure
     }
     ctx.stdout += outText;
     return 0;
   } catch (e) { return fail(ctx, 'duckdb', e); }
+  finally { try { await db?.close(); } catch { /* already gone */ } }
 }
 
 // ── tesseract ───────────────────────────────────────────────────────────────────────────────────────────────────────

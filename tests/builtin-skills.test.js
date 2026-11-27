@@ -235,7 +235,7 @@ describe('multimedia skills', () => {
         expect(fires('audio', 'add the voice settings page')).toBe(false);
     });
     it('the video body admits there is no video tool, the image body no longer asks for a HuggingFace token', () => {
-        expect(W.skillsRegistry.get('video').body).toMatch(/no tool that generates or edits video/);
+        expect(W.skillsRegistry.get('video').body).toMatch(/no tool that generates video/);
         W.enabledTools.add('generate_image');
         const img = W.skillsRegistry.get('image').body_fn();
         expect(img).toContain('no key needed');

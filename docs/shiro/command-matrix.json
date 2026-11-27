@@ -10248,7 +10248,7 @@
     "shiro/commands/ls.ts": "8eed5056889fe6f9f0c15074a6d9c38b84c85ac56685e80719125afe0e6cbfce",
     "shiro/commands/make.ts": "1e42d0dec7f90185b7e6ce967d71a027f59efdfe7c31225c7af7193a55dabc03",
     "shiro/commands/md5sum.ts": "5d25692b0d9ac9f5657522b0a9ac63491ebcc599b06c5f887ed0b7712cca50a9",
-    "shiro/commands/media-tools.ts": "f6e060b02f5a1aa3bb5fa202ec163dc11060e6d327fc793d4294e62d9bfa4b37",
+    "shiro/commands/media-tools.ts": "4e165404add2d3f090b5ef924645860073f726f09b3143c263dc201cd39620c3",
     "shiro/commands/mkdir.ts": "e0f31f1bfb61ef42ee90b54e1b4cedca8dc42db2d1c3ea52f6d2264170bda3e5",
     "shiro/commands/mktemp.ts": "46b02db9ec5fa3c678bf3ce8e10c671eb5b6d93763c42da2ed96f5cd2b95155b",
     "shiro/commands/mv.ts": "ef94dbcc097982214adeb349f06d24c88bb80d6f5ea9fa3502346844007734a0",
