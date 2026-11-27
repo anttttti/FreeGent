@@ -1208,7 +1208,7 @@ function _resolveMediaRouting(
                 if (strip) {
                     const warn = document.createElement('div');
                     warn.className = 'file-chip media-warn-chip';
-                    warn.title = `Add a ${_uncovered.join('/')} capable model to your model list (e.g. Gemini) or set one in Settings → Models → Media Model Routing`;
+                    warn.title = `Add a ${_uncovered.join('/')} capable model to your model list (e.g. Gemini) or set one in Settings → Multimedia → Media Model Routing`;
                     warn.textContent = `⚠ No ${_uncovered.join('/')} model — add a Gemini model`;
                     strip.appendChild(warn);
                     strip.style.display = 'flex';

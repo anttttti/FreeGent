@@ -1,4 +1,4 @@
-import { KEYS } from './storage-keys.js';
+import { KEYS, renameRetiredVoiceModels } from './storage-keys.js';
 import { keyVaultNames } from './key-vault.js';
 import { escapeHtml, jsArg } from './html-escape.js';
 import { turnSoundEnabled } from './turn-sound.js';
@@ -30,24 +30,31 @@ function switchSettingsTab(tab) {
 
 // ── Voice model catalogs ─────────────────────────────────────────────────────
 
+// Checked against the providers on 2026-11-28 (a transcription and a speech request each, as voice.ts sends them): Groq retired
+// distil-whisper-large-v3-en and OpenRouter has no qwen3-asr-flash; Groq's Orpheus TTS needs the org to accept terms, so it is not listed.
 const _VOICE_STT_CATALOG = [
     { key: 'browser|webspeech',                       label: 'Web Speech API',             provider: 'browser',    note: 'Free · browser built-in' },
     { key: 'groq|whisper-large-v3-turbo',             label: 'Whisper Large v3 Turbo',     provider: 'groq',       note: 'Fast · multilingual' },
-    { key: 'groq|whisper-large-v3',                   label: 'Whisper Large v3',           provider: 'groq',       note: 'Most accurate' },
-    { key: 'groq|distil-whisper-large-v3-en',         label: 'Distil Whisper v3 EN',       provider: 'groq',       note: 'English · fastest' },
-    { key: 'openrouter|nvidia/parakeet-tdt-0.6b-v3',  label: 'Parakeet TDT 0.6B v3',       provider: 'openrouter', note: 'NVIDIA · multilingual · free tier' },
-    { key: 'openrouter|qwen/qwen3-asr-flash',         label: 'Qwen3 ASR Flash',            provider: 'openrouter', note: 'Alibaba · 11 languages · free tier' },
+    { key: 'groq|whisper-large-v3',                   label: 'Whisper Large v3',           provider: 'groq',       note: 'Most accurate Whisper' },
+    { key: 'openrouter|nvidia/parakeet-tdt-0.6b-v3',  label: 'Parakeet TDT 0.6B v3',       provider: 'openrouter', note: 'NVIDIA · 25 European languages' },
+    { key: 'openrouter|nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b', label: 'Nemotron 3.5 ASR 0.6B', provider: 'openrouter', note: 'NVIDIA · multilingual · cheapest' },
+    { key: 'openrouter|qwen/qwen3-asr-1.7b',          label: 'Qwen3 ASR 1.7B',             provider: 'openrouter', note: 'Alibaba · multilingual' },
+    { key: 'openrouter|mistralai/voxtral-mini-transcribe-3-0', label: 'Voxtral Mini Transcribe 3', provider: 'openrouter', note: 'Mistral · multilingual' },
+    { key: 'openrouter|openai/gpt-4o-mini-transcribe', label: 'GPT-4o Mini Transcribe',    provider: 'openrouter', note: 'OpenAI · accurate' },
 ];
 
 const _VOICE_TTS_CATALOG = [
     { key: 'browser|webspeech',                                  label: 'Web Speech Synthesis',     provider: 'browser',    note: 'Free · browser built-in' },
-    { key: 'openrouter|mistralai/voxtral-mini-tts-2603',         label: 'Voxtral Mini TTS',         provider: 'openrouter', note: 'Via OpenRouter · free tier' },
-    { key: 'openrouter|hexgrad/kokoro-82m',                      label: 'Kokoro 82M',               provider: 'openrouter', note: 'Open-weight · 8 languages · free tier' },
-    { key: 'openrouter|google/gemini-3.1-flash-tts-preview',     label: 'Gemini 3.1 Flash TTS',     provider: 'openrouter', note: '70+ languages' },
+    { key: 'openrouter|hexgrad/kokoro-82m',                      label: 'Kokoro 82M',               provider: 'openrouter', note: 'Open-weight · 8 languages · cheapest' },
+    { key: 'openrouter|mistralai/voxtral-mini-tts-3-0',          label: 'Voxtral TTS 3',            provider: 'openrouter', note: 'Mistral · multilingual' },
+    { key: 'openrouter|google/gemini-3.8-flash-tts',             label: 'Gemini 3.8 Flash TTS',     provider: 'openrouter', note: 'Google · 70+ languages' },
+    { key: 'openrouter|qwen/qwen3-tts-1.7b',                     label: 'Qwen3 TTS 1.7B',           provider: 'openrouter', note: 'Alibaba · multilingual' },
+    { key: 'openrouter|canopylabs/orpheus-3b-0.1-ft',            label: 'Orpheus 3B',               provider: 'openrouter', note: 'Open-weight · expressive English' },
+    { key: 'openrouter|x-ai/grok-voice-tts-1.0',                 label: 'Grok Voice TTS 1.0',       provider: 'openrouter', note: 'xAI' },
 ];
 
 function _getVoiceList(storageKey, defaultList) {
-    try { return JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultList; }
+    try { const l = JSON.parse(localStorage.getItem(storageKey) || 'null'); return Array.isArray(l) ? renameRetiredVoiceModels(l) : defaultList; }
     catch { return defaultList; }
 }
 
@@ -137,6 +144,7 @@ function populateVoiceTab() {
         ['groq|whisper-large-v3-turbo', 'browser|webspeech']);
     _renderVoicePriorityList('voice-tts-list', _VOICE_TTS_CATALOG, 'fg_voice_tts_list',
         ['browser|webspeech']);
+    renderMediaModelSelectors();
 
     const set = (id, val) => { const el = (document.getElementById(id) as HTMLInputElement); if (el) el.value = val; };
     set('voice-stt-lang',  localStorage.getItem('fg_voice_stt_lang')  || '');
@@ -1888,9 +1896,9 @@ function renderMediaModelSelectors() {
     const container = (document.getElementById('media-model-selectors') as HTMLInputElement);
     if (!container) return;
     const rows = [
-        { type: 'image', label: '🖼 Image', get: getImageModel },
-        { type: 'audio', label: '🎵 Audio', get: getAudioModel },
-        { type: 'video', label: '🎬 Video', get: getVideoModel },
+        { type: 'image', label: 'Image input', get: getImageModel },
+        { type: 'audio', label: 'Audio input', get: getAudioModel },
+        { type: 'video', label: 'Video input', get: getVideoModel },
     ];
     container.innerHTML = rows.map(({ type, label, get }) => {
         const current = get();
@@ -1903,10 +1911,8 @@ function renderMediaModelSelectors() {
                 const mark = _choiceUsable(spec) ? '' : ' (no key)';
                 return `<option value="${escapeHtml(spec)}"${sel}>${escapeHtml(`${m.provider}/${m.model}${mark}`)}</option>`;
             })).join('');
-        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="width:56px;font-size:12px;color:var(--muted);flex-shrink:0">${label}</span>
-            <select class="settings-input" style="flex:1" onchange="saveMediaModel('${type}',this.value)">${opts}</select>
-        </div>`;
+        return `<tr><td class="settings-table-label" style="white-space:nowrap">${label}</td>
+            <td><select class="settings-input" onchange="saveMediaModel('${type}',this.value)">${opts}</select></td></tr>`;
     }).join('');
 }
 

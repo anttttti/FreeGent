@@ -381,7 +381,7 @@
                     <button class="settings-tab-btn"        data-tab="tools" title="Where code the agent runs executes (browser sandboxes, local shell), web search, and which tools the agent may call in Chat and Cowork modes"    onclick="switchSettingsTab('tools')">Tools</button>
                     <button class="settings-tab-btn"        data-tab="mcp" title="Connect MCP servers and pick which of their tools the agent can use"      onclick="switchSettingsTab('mcp');renderMcpTab()">MCP</button>
                     <button class="settings-tab-btn"        data-tab="roles" title="View and edit agent roles (Director, coder, etc.): their prompts and allowed tools"    onclick="switchSettingsTab('roles');renderRolesTab()">Roles</button>
-                    <button class="settings-tab-btn"        data-tab="voice" title="Speech input and spoken replies: voice, language and speed"    onclick="switchSettingsTab('voice');populateVoiceTab()">Voice</button>
+                    <button class="settings-tab-btn"        data-tab="voice" title="Speech input and spoken replies, and the models that read images, audio and video"    onclick="switchSettingsTab('voice');populateVoiceTab()">Multimedia</button>
                 </div>
 
                 <div class="settings-tab-panel active" data-tab="credentials">
@@ -509,13 +509,6 @@
                             </tr>
                         </table>
                         <p class="settings-hint" style="margin-top:6px;margin-bottom:0">A value you set is sent to <b>custom endpoints</b> (vLLM / Ollama / LM Studio); Temperature is sent to every provider. Fields are empty by default, so each model runs with its own provider's defaults.</p>
-                    </div>
-
-                    <!-- Media model selectors -->
-                    <div class="settings-section">
-                        <span class="settings-label">Media Model Routing</span>
-                        <p class="settings-hint" style="margin-bottom:8px">When a message includes multimedia, requests are routed to these models. "Auto" uses the first capable model from the priority list.</p>
-                        <div id="media-model-selectors"></div>
                     </div>
 
                     <!-- Model catalog table -->
@@ -823,7 +816,7 @@
                     <!-- STT -->
                     <div class="settings-section">
                         <span class="settings-label">Speech Input (STT)</span>
-                        <p class="settings-hint">Models tried in order. First with an available key is used.</p>
+                        <p class="settings-hint">Tried in order: the first model with an available key is used.</p>
                         <div id="voice-stt-list"></div>
                         <table class="settings-table" style="width:100%;margin-top:10px"><tbody>
                             <tr>
@@ -835,9 +828,9 @@
                         </tbody></table>
                     </div>
                     <!-- TTS -->
-                    <div class="settings-section" style="border-bottom:none">
+                    <div class="settings-section">
                         <span class="settings-label">Speech Output (TTS)</span>
-                        <p class="settings-hint">Models tried in order. First with an available key is used.</p>
+                        <p class="settings-hint">Tried in order: the first model with an available key is used.</p>
                         <div id="voice-tts-list"></div>
                         <table class="settings-table" style="width:100%;margin-top:10px"><tbody>
                             <tr>
@@ -871,6 +864,12 @@
                                 </td>
                             </tr>
                         </tbody></table>
+                    </div>
+                    <!-- Media input models (moved here from Models) -->
+                    <div class="settings-section" style="border-bottom:none">
+                        <span class="settings-label">Media Model Routing</span>
+                        <p class="settings-hint">Models that read the images, audio and video of a message. "Auto" uses the first capable model in the priority list.</p>
+                        <table class="settings-table" style="width:100%;margin-top:10px"><tbody id="media-model-selectors"></tbody></table>
                     </div>
                 </div>
 

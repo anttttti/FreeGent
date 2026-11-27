@@ -27,7 +27,6 @@ A profile is a named snapshot of your model list, tools, skills and agent settin
 - **Utility Model**: used for chat titles, prompt suggestions and other short side calls. "None" turns titles and suggestions off.
 - The model dropdowns (Search to add models, Worker Model, Utility Model, and the image, audio and video models) list only models you can use now: with your own key, a Worker key from a Developer key or the guest quota, or no key needed. If a Worker or Utility Model you picked has lost its key, the next one with a key is used, and a note says which, until its key is back.
 - **Sampling overrides**: temperature, top-p, top-k, min-p, presence and repetition penalty. All are empty by default, and an empty field is left out of the request, so each provider or server uses its own default. A value you set is sent to custom endpoints; Temperature is sent to every provider. [Profiles](#profiles) carry these values.
-- **Media Model Routing**: which models receive messages that contain images or audio.
 - **Model Catalog**: all known models, with **Check for updates**. Use ✕ to remove one.
 
 ## Privacy
@@ -72,9 +71,10 @@ Also on this tab:
 | **MCP** | Connect Model Context Protocol servers and choose which of their tools the agent sees. See [MCP servers](../harness/mcp.md). |
 | **Roles** | View and edit each role's system prompt and tool ceiling; uncheck a role to stop workers using it. **Reset** restores the built-in prompt. |
 
-## Voice
+## Multimedia
 
-Speech input (STT) and output (TTS) models, tried in order with the first one that has a key. Language, browser voice, speed and pitch, and auto-speak.
+- **Speech Input (STT)** and **Speech Output (TTS)**: models tried in order, the first one with a key is used. Language, browser voice, speed and pitch, and auto-speak.
+- **Media Model Routing**: the models that read the images, audio and video of a message. "Auto" uses the first capable model in the priority list.
 
 ## Where your data lives
 

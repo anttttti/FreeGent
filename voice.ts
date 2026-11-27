@@ -1,5 +1,5 @@
 // voice.js — FreeGent: speech input (STT) and speech output (TTS)
-import { KEYS, voiceApivKey } from './storage-keys.js';
+import { KEYS, voiceApivKey, renameRetiredVoiceModels } from './storage-keys.js';
 
 let _mediaRecorder: MediaRecorder | null = null;
 let _speechRec: any        = null;    // the running Web Speech recognizer, so the mic button can stop it (codex R342)
@@ -39,15 +39,43 @@ function _speechUrl(provider) {
 }
 
 // Sensible default voice IDs per model (OpenAI-compat /audio/speech)
+// The voice names are each model's own (a wrong one is a 400, or for Voxtral a 404); "alloy" is only the OpenAI one.
 const _TTS_VOICE_DEFAULTS = {
     'openrouter|hexgrad/kokoro-82m':                  'af_sarah',
+    'openrouter|google/gemini-3.8-flash-tts':         'Aoede',
     'openrouter|google/gemini-3.1-flash-tts-preview': 'Aoede',
+    'openrouter|mistralai/voxtral-mini-tts-3-0':      'en_paul_neutral',
+    'openrouter|mistralai/voxtral-mini-tts-2603':     'en_paul_neutral',
+    'openrouter|qwen/qwen3-tts-1.7b':                 'ryan',
+    'openrouter|canopylabs/orpheus-3b-0.1-ft':        'tara',
+    'openrouter|x-ai/grok-voice-tts-1.0':             'eve',
 };
+
+/** OpenRouter answers a speech request with raw 16-bit PCM (`audio/pcm;rate=24000;channels=1`) unless a format is asked for, and each model
+ *  supports a different set of formats. An <audio> element cannot play raw PCM, so it is given a WAV header and plays. */
+export function pcmToWav(pcm: Uint8Array, rate = 24000, channels = 1): Uint8Array {
+    const out = new Uint8Array(44 + pcm.length), v = new DataView(out.buffer);
+    const tag = (o: number, t: string) => { for (let i = 0; i < 4; i++) out[o + i] = t.charCodeAt(i); };
+    tag(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * channels * 2, true); v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true);
+    tag(36, 'data'); v.setUint32(40, pcm.length, true);
+    out.set(pcm, 44);
+    return out;
+}
+/** The playable form of a speech response: raw PCM becomes WAV, anything else is already a container the browser plays. */
+export async function playableSpeech(r: { headers: { get(n: string): string | null }; blob(): Promise<Blob> }): Promise<Blob> {
+    const type = r.headers.get('content-type') || '';
+    const blob = await r.blob();
+    if (!/^audio\/(?:l16|pcm)/i.test(type)) return blob;
+    const num = (k: string, d: number) => Number(new RegExp(`${k}=(\\d+)`, 'i').exec(type)?.[1]) || d;
+    return new Blob([pcmToWav(new Uint8Array(await blob.arrayBuffer()), num('rate', 24000), num('channels', 1)) as BlobPart], { type: 'audio/wav' });
+}
 
 function _getSttList() {
     try {
-        return JSON.parse(localStorage.getItem(KEYS.VOICE_STT_LIST) || 'null')
-            || ['groq|whisper-large-v3-turbo', 'browser|webspeech'];
+        const l = JSON.parse(localStorage.getItem(KEYS.VOICE_STT_LIST) || 'null');
+        return Array.isArray(l) ? renameRetiredVoiceModels(l) : ['groq|whisper-large-v3-turbo', 'browser|webspeech'];
     } catch { return ['groq|whisper-large-v3-turbo', 'browser|webspeech']; }
 }
 
@@ -241,7 +269,7 @@ async function _apiSpeak(text, key, provider, model, entryKey) {
             body: JSON.stringify({ model, input: text, voice: voiceId }),
         });
         if (!r.ok) { console.error('[voice] TTS error:', await r.text()); return; }
-        const blob    = await r.blob();
+        const blob    = await playableSpeech(r);
         if (mine !== _ttsSeq) return;
         _releaseTtsAudio();
         _ttsUrl = URL.createObjectURL(blob);

@@ -38,7 +38,7 @@ const PAGES: Record<string, Page> = {
     settings: { title: 'Settings', doc: 'settings', points: [
         '<b>Credentials</b> comes first: keys for model providers, search and tools. They stay in this browser and never go into a profile.',
         '<b>Models</b> orders providers and fallbacks, <b>Privacy</b> sets where requests may go, and <b>Profiles</b> saves a whole setup.',
-        '<b>Agent</b>, <b>Skills</b>, <b>Tools</b>, <b>MCP</b>, <b>Roles</b> and <b>Voice</b> shape what the agent does and which tools it may call.',
+        '<b>Agent</b>, <b>Skills</b>, <b>Tools</b>, <b>MCP</b>, <b>Roles</b> and <b>Multimedia</b> shape what the agent does and which tools it may call.',
     ] },
 };
 
@@ -202,7 +202,7 @@ function buildTours(): Record<string, Step[]> {
             { sel: [stab('privacy')], enter: settingsTab('privacy'), place: ['bottom'], title: 'Privacy',
               html: 'Where requests may go: through FreeGent\'s Cloudflare Worker, straight to the providers, or to your local network only.' },
             { sel: [stab('agent'), stab('skills'), stab('tools'), stab('mcp'), stab('roles'), stab('voice')], enter: settingsTab('agent'), place: ['bottom'], title: 'Shaping the agent',
-              html: '<b>Agent</b>: step limits, retries, compaction and checks. <b>Skills</b>: extra instructions it loads on demand. <b>Tools</b>: where code runs and what it may call. <b>MCP</b>: connect servers. <b>Roles</b> and <b>Voice</b> follow.' },
+              html: '<b>Agent</b>: step limits, retries, compaction and checks. <b>Skills</b>: extra instructions it loads on demand. <b>Tools</b>: where code runs and what it may call. <b>MCP</b>: connect servers. <b>Roles</b> and <b>Multimedia</b> follow.' },
         ],
     };
 }

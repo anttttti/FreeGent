@@ -279,24 +279,11 @@ const _IMAGE_BODY = [
     _imageHead('Three'), _IMG_CHARTS, _IMG_SVG,
     `**AI-generated raster images (photos, artwork)** — call \`generate_image\`, then embed the result with \`[IMAGE:key]\` where key is from the tool's \`display\` field.`,
     _IMG_NEVER,
-    `### Tool: generate_image (requires HuggingFace token in Settings)`,
-    `\`\`\`
-generate_image({
-  prompt: "a photorealistic sunset over snow-capped mountains, golden hour, dramatic clouds",
-  filename: "sunset.png",              // optional — saved to workspace
-  negative_prompt: "blurry, low quality, watermark"  // optional, SDXL only
-})
-\`\`\``,
-    `Tries **stabilityai/stable-diffusion-xl-base-1.0** first, falls back to **black-forest-labs/FLUX.1-schnell**. Returns \`{ success, path, model, prompt, display }\`.`,
-    `### Prompting tips
-- Be specific: subject, style, lighting, mood, medium ("oil painting", "photorealistic", "watercolor", "pixel art")
-- For SDXL use \`negative_prompt\` to exclude: "blurry, low quality, watermark, text, deformed"
-- FLUX.1-schnell handles natural-language prompts well; SDXL benefits from comma-separated style tags`,
-    `### Workflow
-1. **Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply
-2. **Photo/realistic image request:** call \`generate_image\`, then write \`[IMAGE:key]\` in your reply
-3. If the HuggingFace token is missing, tell the user to add it in **Settings → Credentials → HuggingFace Key**
-4. HF free tier may be slow on first call (cold start ~20–60s) or return 503 — retry once on failure`,
+    `### Tool: generate_image (no key needed)
+\`\`\`
+generate_image({ prompt: "a photorealistic sunset over snow-capped mountains, golden hour", filename: "sunset.png" })
+\`\`\`
+Returns \`{ success, path, model, prompt, display }\`: write the \`display\` marker (\`[IMAGE:key]\`) in your reply. The file is saved in the workspace under \`filename\`. Be specific: subject, style, lighting, medium. If a call fails, retry once; if it fails again, say so, and offer an SVG or a chart instead.`,
 ].join('\n\n');
 const _IMAGE_BODY_NO_GEN = [_imageHead('Two'), _IMG_CHARTS, _IMG_SVG, _IMG_NEVER, `### Workflow
 **Diagram/SVG request:** generate SVG code, paste raw \`<svg>...</svg>\` XML in your reply.`].join('\n\n');
@@ -357,11 +344,16 @@ const BUILTIN_RULES = [
     {
         name: 'audio',
         type: 'rule',
-        description: 'Audio file processing — how to handle attached audio depending on provider capability.',
+        description: 'Audio: attached audio files, transcription, and what the agent can and cannot do with speech.',
+        trigger: 'transcribe, transcript, transcription, speech to text, text to speech, read aloud, read it out, dictate, tts, stt, podcast, mp3, wav, audio file',
         trigger_on_media: 'audio',
-        body: `## Audio Input
+        body: `## Audio
 
-An audio file has been attached to this message.
+You have no tool that listens or speaks. FreeGent itself does both for the user: the microphone button types what they say (speech input), and **Settings → Multimedia** turns on spoken replies and chooses the speech models. For "read this aloud" or "let me dictate", point them there instead of pretending to do it.
+
+### Audio Input
+
+If an audio file is attached to this message:
 
 **If you can directly perceive the audio** (Gemini, NVIDIA Omni, or other audio-capable model):
 - Transcribe speech content if asked, or if no specific task is given
@@ -374,6 +366,24 @@ An audio file has been attached to this message.
 - Do NOT guess or fabricate what the audio contains
 - Suggest the user switch to Gemini or another audio-capable model for direct analysis
 - If Whisper or a speech-to-text tool is available, offer to transcribe via \`execute_code\`
+
+Be explicit about what you can and cannot perceive from the file.`
+    },
+    {
+        name: 'video',
+        type: 'rule',
+        description: 'Video: attached clips, and what the agent can and cannot do with video.',
+        trigger: 'video, videos, mp4, mov, webm, footage, screencast, screen recording, movie',
+        trigger_on_media: 'video',
+        body: `## Video
+
+You have no tool that generates or edits video files. Do not claim to have made a video, and do not invent a file name for one. For a request to make one, say so and offer what you can do: a storyboard or script, still frames with \`generate_image\`, or an animation built in code (SVG/CSS animation or canvas in an HTML page, checked with \`check_page\`).
+
+### Video Input
+
+If a video is attached to this message:
+- **If you can directly perceive video** (Gemini or another video-capable model): describe what happens in order, with approximate timestamps; transcribe speech if asked; note on-screen text.
+- **If you cannot perceive it** (text-only provider): say what the file is (name, format, size) and that you cannot see its content. Do NOT guess or invent what it shows. Suggest a video-capable model (**Settings → Multimedia → Media Model Routing → Video input**), or ask for a few still frames or a transcript.
 
 Be explicit about what you can and cannot perceive from the file.`
     },

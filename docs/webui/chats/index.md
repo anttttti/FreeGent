@@ -21,7 +21,7 @@ Attach files from the paperclip, drag and drop them onto the chat, or paste. On 
 
 | Attachment | What the model gets |
 |---|---|
-| Images, audio | Sent to a model that accepts them. **Settings → Models → Media Model Routing** chooses the models; "Auto" uses the first capable model in your priority list. |
+| Images, audio, video | Sent to a model that accepts them. **Settings → Multimedia → Media Model Routing** chooses the models; "Auto" uses the first capable model in your priority list. |
 | PDF, Word, Excel | Text extracted in the browser |
 | Text and code files | The file content |
 
@@ -29,7 +29,7 @@ Attachments are saved with the chat. If a model refuses images, FreeGent remembe
 
 ## Voice
 
-Speech input and spoken replies work where the browser supports them. **Settings → Voice** sets the speech models, language, voice, speed and pitch, and whether replies are spoken automatically.
+Speech input and spoken replies work where the browser supports them. **Settings → Multimedia** sets the speech models, language, voice, speed and pitch, and whether replies are spoken automatically.
 
 ## Saved chats
 

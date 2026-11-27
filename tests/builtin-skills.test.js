@@ -221,3 +221,24 @@ describe('kanban-board skill', () => {
         expect(cowork).toBe('');
     });
 });
+
+describe('multimedia skills', () => {
+    const inputs = (text, msgMedia = []) => ({ roleName: null, lowerText: text, rawText: text, firstMsg: true, isTaskCompletion: false, turn: 1,
+        wsExts: new Set(), wsNames: new Set(), wsAllPaths: new Set(), msgMedia: new Set(msgMedia), histTools: new Set() });
+    const fires = (name, text, media) => W.evaluateSkillTriggers(W.skillsRegistry, new Set(), inputs(text, media)).has(name);
+    it('video and audio fire on their keywords or an attachment, not on unrelated words', () => {
+        expect(fires('video', 'make a video of the sunrise')).toBe(true);
+        expect(fires('video', 'what happens here', ['video'])).toBe(true);
+        expect(fires('video', 'animate the button with css')).toBe(false);
+        expect(fires('audio', 'please transcribe this podcast')).toBe(true);
+        expect(fires('audio', 'read the answer aloud')).toBe(false);   // "read aloud" only as the phrase
+        expect(fires('audio', 'add the voice settings page')).toBe(false);
+    });
+    it('the video body admits there is no video tool, the image body no longer asks for a HuggingFace token', () => {
+        expect(W.skillsRegistry.get('video').body).toMatch(/no tool that generates or edits video/);
+        W.enabledTools.add('generate_image');
+        const img = W.skillsRegistry.get('image').body_fn();
+        expect(img).toContain('no key needed');
+        expect(img).not.toMatch(/HuggingFace|SDXL|FLUX\.1/);
+    });
+});

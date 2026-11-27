@@ -198,6 +198,12 @@ export const ckptKey         = (id: string) => `fg_ckpt_${id}`;
 export const roleBodyKey     = (name: string) => `fg_role_body_${name}`;
 // Saved JS source for body_fn roles — stored as the full function string, executed at runtime.
 export const roleBodyFnKey   = (name: string) => `fg_role_body_fn_${name}`;
+/** Voice models a provider has retired, with what a saved list entry for one becomes (it would fail on every use and stop the list from reaching the next entry). */
+const _RETIRED_VOICE_MODELS: Record<string, string> = {
+    'groq|distil-whisper-large-v3-en': 'groq|whisper-large-v3-turbo',
+    'openrouter|qwen/qwen3-asr-flash': 'openrouter|qwen/qwen3-asr-1.7b',
+};
+export const renameRetiredVoiceModels = (list: string[]): string[] => [...new Set(list.map(k => _RETIRED_VOICE_MODELS[k] ?? k))];
 export const voiceApivKey    = (entryKey: string) => `fg_voice_apiv_${entryKey}`;
 
 // sessionStorage keys (page-lifetime only, not persisted across reloads)
