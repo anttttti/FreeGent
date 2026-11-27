@@ -489,7 +489,9 @@ async function _listTools(server: { url: string; headers?: Record<string, string
     let cursor: string | undefined;
     for (let page = 0; page < _MAX_TOOL_PAGES; page++) {
         const r = await _request(server, 'tools/list', cursor ? { cursor } : {});
-        for (const t of r?.tools || []) {
+        // The spec's result carries a `tools` array: a reply without one is a broken answer, not an empty inventory (a refresh would drop every tool and its enablement).
+        if (!Array.isArray(r?.tools)) throw new Error('tools/list returned no tools array');
+        for (const t of r.tools) {
             if (t && typeof t.name === 'string' && !tools.some(x => x.name === t.name))   // overlapping pages can repeat a tool: kept once (fa91204#9)
                 tools.push({ name: t.name, description: _clean(t.description), inputSchema: _redactDeep(t.inputSchema, _secrets), annotations: t.annotations });   // the schema's descriptions and defaults reach the model too (night exploration D028)
         }

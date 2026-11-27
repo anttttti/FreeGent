@@ -229,6 +229,14 @@ describe('server registry', () => {
         expect(W.mcpToolRisk(W.mcpToolName(s.id, 'ro'))).toBe('read');
     });
 
+    it('refuses a tools/list page without a tools array instead of reading it as an empty inventory (EV026)', async () => {
+        mockServer(msg => {
+            if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18' } };
+            return { result: {} };
+        }, { sse: false, session: '' });
+        await expect(W.addMcpServer({ name: 'q', url: 'https://q.example.com/mcp' })).rejects.toThrow(/no tools array/);
+    });
+
     it('follows tools/list pagination', async () => {
         mockServer(msg => {
             if (msg.method === 'initialize') return { result: { protocolVersion: '2025-06-18' } };

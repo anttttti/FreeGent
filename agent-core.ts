@@ -1070,6 +1070,8 @@ async function _processQueue(): Promise<void> {
     // The same cross-tab rule as a direct Send: a turn in a chat another tab is running would overwrite its history. The message stays queued and is tried again (codex R113).
     const leaseChat = activeChatId as string | null;
     if (!acquireChatLease(leaseChat) && (await chatLeaseHolderAlive(leaseChat) || !acquireChatLease(leaseChat))) { setTimeout(() => _processQueue(), 3000); return; }
+    // The ping above waits: the chat may have changed or the head been cancelled meanwhile. The lease is of the chat the head was read for.
+    if (activeChatId !== leaseChat || MsgQueue.peek() !== head) { releaseChatLease(leaseChat); setTimeout(() => _processQueue(), 0); return; }
     const msg = MsgQueue.shift();
     if (!msg) { releaseChatLease(leaseChat); return; }
     // A steer-interrupt sets softStopPending=true to abort the current turn; clear it so the
@@ -1829,11 +1831,13 @@ async function stopTurnAndWait(): Promise<boolean> {
     if (busy() && aiJob === 'runner' && !confirm('Autopilot is running. Doing this stops it.\n\nOK stops Autopilot and continues; Cancel leaves everything as it is.')) return false;
     // Messages queued behind the running turn were written for the conversation that is being replaced: left in
     // the queue they would start as soon as the stopped turn ends, in whatever chat and project is open then.
+    const parked = MsgQueue.getAll();
     MsgQueue.clear();
     if (!busy()) return true;
     stopNow();
     for (let i = 0; i < 100 && busy(); i++) await new Promise(r => setTimeout(r, 50));
     if (busy()) {   // a tool that ignores cancellation: do not replace the conversation under it
+        MsgQueue.restore(parked);   // nothing is replaced, so the messages still belong to the open conversation
         alert('The running task did not stop in time, so nothing was changed. Try again in a moment.');
         return false;
     }
@@ -1869,8 +1873,8 @@ function userSend(): void {
         if (typeof hasPendingAttachments === 'function' && hasPendingAttachments()) { warnAttachmentSendBusy(); return; }
         if (/^\/goal\b/i.test(text)) { if (inp) { inp.innerHTML = ''; autoResizeTextarea(inp as any); } void runGoalCommand(text.replace(/^\/goal\b/i, '').trim()); return; }
         if (inp) { inp.innerHTML = ''; autoResizeTextarea(inp as any); }
-        steerGoal(text);
-        appendMessage?.('model', `<em style="color:var(--muted)">Added to the goal's next turn: ${esc(text.slice(0, 200))}</em>`);
+        if (steerGoal(text)) appendMessage?.('model', `<em style="color:var(--muted)">Added to the goal's next turn: ${esc(text.slice(0, 200))}</em>`);
+        else { if (inp) _setInputText(inp, text); appendMessage?.('model', `<em style="color:var(--muted)">The goal is finishing, so the note was not added. It is back in the input.</em>`); }
         return;
     }
     if (aiJob) {

@@ -86,3 +86,23 @@ describe('pruned read stub', () => {
         expect(stub).toContain('Do not read them again');
     });
 });
+
+// EV027, EV028: results are read against the call block before them, and a cut result is not a copy of its range.
+describe('pruneSessionHistory with reused call ids and cut results', () => {
+    const run = (events: Array<[string, any]>) => {
+        const sess = new Session({ id: `s${++_n}`, chatId: 'c' });
+        sess.append('user/message', { role: 'user', content: 'task' }, { surfaceOp: 'append' });
+        for (const [type, data] of events) sess.append(type as any, data, { surfaceOp: 'append' });
+        pruneSessionHistory(sess);
+        return sess.deriveMessages().filter((m: any) => m.role === 'tool').map((m: any) => m.content.startsWith('[pruned:'));
+    };
+    const call = (id: string, args: any) => ['assistant/message', { turn: 0, step: 0, message: { role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name: 'read_file', arguments: JSON.stringify(args) } }] } }] as [string, any];
+    const result = (id: string, content = BIG) => ['tool/result', { turn: 0, step: 0, callId: id, name: 'read_file', content }] as [string, any];
+    it('a later response reusing an id does not turn the first read into a duplicate of the second file', () => {
+        expect(run([call('dup', { path: 'a.py' }), result('dup'), call('dup', { path: 'b.py' }), result('dup')])).toEqual([false, false]);
+    });
+    it('a later explicit read that was cut does not cover the range it was asked for', () => {
+        const cut = BIG + '\n[…truncated. Use start_line/end_line to read a smaller section.]';
+        expect(run([call('x1', { path: 'f.py', start_line: 251, end_line: 300 }), result('x1'), call('x2', { path: 'f.py', start_line: 1, end_line: 350 }), result('x2', cut)])).toEqual([false, false]);
+    });
+});

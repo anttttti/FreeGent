@@ -35,7 +35,9 @@ export async function selectPreviewFile(
     if (candidates.length === 1) return candidates[0];
     if (pick) {
         try {
-            const raw = (await pick(candidates))?.trim().split('\n')[0].replace(/^["'`\s-]+|["'`\s]+$/g, '');
+            const line = (await pick(candidates))?.trim().split('\n')[0] ?? '';
+            // The exact path first (a name may start with "-" or end with a quote); then the answer without a bullet or quotes around it.
+            const raw = candidates.includes(line) ? line : line.replace(/^["'`\s-]+|["'`\s]+$/g, '');
             if (raw && candidates.includes(raw)) return raw;
         } catch (e: any) { console.warn('[preview] utility pick failed:', e?.message); }
     }
@@ -52,7 +54,9 @@ async function _utilityPick(candidates: string[]): Promise<string | null> {
     return callLLMComplete(prompt, { endpoint: uep, maxTokens: 40, temperature: 0, maxAttempts: 1, label: 'preview:pick', allowPartial: true }, NULL_TASK_HANDLE);
 }
 
-// The utility model is asked again only when the candidate list changes.
+// The utility model is asked again when the candidate list changes, when it is switched on or off, and (bounded) after an answer that chose nothing.
+const _RETRY_MS = 60_000;
+let _lastAt = 0;
 let _lastSig = '';
 let _lastChoice: string | null = null;
 let _seq = 0;
@@ -65,12 +69,12 @@ export async function updateRailPreview(): Promise<void> {
     let names: string[] = [];
     try { names = (await agentListFiles()).filter((f: any) => !f.isLocal).map((f: any) => f.name); } catch { return; }
     // JSON, not a newline join: two lists whose names differ only by where a newline sits (`a.html\nb.txt` against `a.html`, `b.txt`) had one signature and kept a stale choice (explorations W009).
-    const sig = names.includes('index.html') ? 'index.html' : JSON.stringify(previewCandidates(names).sort());
+    const sig = names.includes('index.html') ? 'index.html' : JSON.stringify(previewCandidates(names).sort()) + (typeof isUtilityDisabled === 'function' && isUtilityDisabled() ? '|no-utility' : '');
     let choice = _lastChoice;
-    if (sig !== _lastSig || (choice && !names.includes(choice))) {
+    if (sig !== _lastSig || (choice && !names.includes(choice)) || (!choice && Date.now() - _lastAt > _RETRY_MS)) {
         choice = await selectPreviewFile(names, _utilityPick);
         if (seq !== _seq) return; // a newer refresh superseded this one
-        _lastSig = sig; _lastChoice = choice;
+        _lastSig = sig; _lastChoice = choice; _lastAt = Date.now();
     }
     el.innerHTML = '';
     if (!choice) { _shown = null; return; }

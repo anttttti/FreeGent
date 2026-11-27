@@ -13,9 +13,10 @@ export function canonTaskStatus(status: any): string {
 const COLUMN: Record<string, string> = { todo: 'todo', open: 'todo', blocked: 'todo', 'in-progress': 'in-progress', 'in-review': 'review', done: 'done' };
 export const columnOfStatus = (status: any): string => COLUMN[canonTaskStatus(status)] ?? 'todo';
 
-// Task title as compared for duplicates: case, spacing and a leading "#NNN" are ignored.
+// Task title as compared for duplicates: case, spacing and a leading id ("#3", "003", "3.") are ignored. A bare quantity is part of the title:
+// "1 MB attachment" and "10 MB attachment" are two tasks.
 export const taskTitleKey = (title: any): string =>
-    String(title || '').toLowerCase().replace(/^#?\d+\s+/, '').replace(/\s+/g, ' ').trim();
+    String(title || '').toLowerCase().replace(/^(?:#\d+|0\d+|\d+[.:)—–-])\s+/, '').replace(/\s+/g, ' ').trim();
 
 // One task per title. The lowest id (the original) is kept; copies are dropped, so the board and the
 // runner never see the same task twice. Tasks without a title are never merged.
@@ -58,7 +59,7 @@ export const isScratchTask = (path: unknown): boolean => /^fg-tasks\/current\.md
 // A task file written by a worker run's merge keeps the front matter it has on disk (id, title, status, depends…); only the body is the worker's. A status
 // moves through the gates only (kanbanflow set 3, vague: a worker's copy said done, the unticked box and every gate went unseen), and a copy without the `id`
 // line took the task out of every dependency lookup ("#005 needs #004" with #004 done, the board stopped with two tasks open).
-const _FM_BLOCK = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;   // an opening `---` may be followed by spaces, as the shared parser reads it (review of dde5141)
+const _FM_BLOCK = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;   // an opening `---` may be followed by spaces, as the shared parser reads it (review of dde5141)
 export function keepTaskFrontMatter(path: string, previous: string | null, next: string): string {
     if (previous === null || !isTaskPath(path) || isScratchTask(path) || /\/ledger\.md$/.test(path) || !/\.md$/i.test(path)) return next;
     const was = _FM_BLOCK.exec(previous)?.[0];

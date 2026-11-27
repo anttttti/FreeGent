@@ -57,3 +57,14 @@ describe('hermes C15: block extraction keeps the rest of the read result', () =>
         }
     });
 });
+
+describe('read bookkeeping keeps the workspace and the Local Folder apart (EV029)', () => {
+    it('six reads of report.txt do not suppress the first read of local/report.txt', () => {
+        localStorage.setItem('fg_agent_max_tool_result', '100');   // clipped reads may be asked for again, so the count reaches six
+        for (let i = 0; i < 6; i++) truncateResultForHistory('read_file', { path: 'report.txt', content: 'A'.repeat(500) });
+        expect(truncateResultForHistory('read_file', { path: 'report.txt', content: 'A'.repeat(500) }).note).toMatch(/6 times/);
+        const r = truncateResultForHistory('read_file', { path: 'local/report.txt', start_line: 5, end_line: 9, content: 'the folder copy' });
+        expect(r.note).toBeUndefined();
+        expect(r.content).toBe('the folder copy');
+    });
+});

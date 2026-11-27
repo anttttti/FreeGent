@@ -3,6 +3,14 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { splitFrontmatter, parseFrontmatter, parseFmLines, setFmLines, buildFrontmatter, setFrontmatterFields } from '../frontmatter.ts';
 
+describe('a leading byte-order mark (EV030)', () => {
+    it('is read past and kept when the block is rewritten', () => {
+        const src = '\uFEFF---\nid: 1\nstatus: todo\n---\nbody\n';
+        expect(parseFrontmatter(src)).toMatchObject({ id: '1', status: 'todo' });
+        expect(setFrontmatterFields(src, { status: 'done' })).toBe('\uFEFF---\nid: 1\nstatus: done\n---\nbody\n');
+    });
+});
+
 describe('splitFrontmatter / parseFrontmatter', () => {
     it('splits fences from body and keeps the body byte for byte', () => {
         const s = splitFrontmatter('---\nid: 1\ntitle: T\n---\n# T\r\nbody\n')!;

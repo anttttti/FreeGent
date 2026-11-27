@@ -53,11 +53,13 @@ function slideOrder(zip: Map<string, () => Uint8Array>): string[] | null {
     const pres = zip.get('ppt/presentation.xml'), rels = zip.get('ppt/_rels/presentation.xml.rels');
     if (!pres || !rels) return null;
     const target = new Map<string, string>();
-    for (const m of utf8(rels()).matchAll(/<Relationship\b[^>]*>/g)) {
-        const id = /\bId="([^"]*)"/.exec(m[0])?.[1], t = /\bTarget="([^"]*)"/.exec(m[0])?.[1];
+    // Comments dropped (a commented-out entry is not one), either quote, and the element may be in the default namespace (`<sldId>`).
+    const attr = (tag: string, name: string) => { const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(tag); return m ? m[1] ?? m[2] : undefined; };
+    for (const m of plainXml(utf8(rels())).matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = attr(m[0], 'Id'), t = attr(m[0], 'Target');
         if (id && t) target.set(id, _partPath('ppt', t));
     }
-    const ids = [...canonicalPrefixes(utf8(pres())).matchAll(/<p:sldId\b[^>]*\br:id="([^"]*)"/g)].map(m => target.get(m[1]));
+    const ids = [...canonicalPrefixes(plainXml(utf8(pres()))).matchAll(/<(?:p:)?sldId\b[^>]*>/g)].map(m => target.get(attr(m[0], 'r:id') ?? ''));
     const parts = ids.filter((t): t is string => !!t && zip.has(t));
     return parts.length ? parts : null;
 }

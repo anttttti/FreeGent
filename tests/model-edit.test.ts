@@ -79,3 +79,41 @@ describe('model edit dialog', () => {
         expect(W.getAllModels().filter((m: any) => `${m.provider}|${m.model}` === key)).toHaveLength(1);
     });
 });
+
+describe('detection results (EV031, EV032)', () => {
+    const catalogs: Record<string, any> = {
+        'http://a.test/v1/models': { data: [{ id: 'model-a', max_model_len: 163840 }] },
+        'http://b.test/v1/models': { data: [{ id: 'model-b' }] },
+    };
+    const stubServers = (late: Record<string, Promise<void>> = {}) => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        await late[url];
+        return catalogs[url] ? { ok: true, json: async () => catalogs[url] } : { ok: false, status: 404, json: async () => ({}) };
+    }));
+    const addForm = () => {
+        document.body.insertAdjacentHTML('beforeend', '<div id="add-custom-model-form"><input id="new-model-url"><input id="new-model-key"><input id="new-model-api"><input id="new-model-id"><input id="new-model-label"><input id="new-model-ctx"><input id="new-model-note"><span id="new-model-detect-status"></span></div>');
+    };
+    it('a late answer for another address does not fill the form, and a detected address is saved as the one probed', async () => {
+        addForm();
+        let release!: () => void;
+        stubServers({ 'http://a.test/v1/models': new Promise<void>(r => { release = r; }) });
+        set('new-model-url', 'http://a.test');
+        const first = W.detectNewModel();
+        set('new-model-url', 'http://b.test');
+        await W.detectNewModel();
+        release(); await first;
+        expect((document.getElementById('new-model-id') as HTMLInputElement).value).toBe('model-b');
+        expect((document.getElementById('new-model-url') as HTMLInputElement).value).toBe('http://b.test/v1');
+        expect((document.getElementById('new-model-ctx') as HTMLInputElement).value).not.toBe('160');
+    });
+    it('a late re-detection does not change the model of a dialog opened since', async () => {
+        let release!: () => void;
+        stubServers({ 'http://x/v1/models': new Promise<void>(r => { release = r; }) });
+        catalogs['http://x/v1/models'] = { data: [{ id: 'mine', max_model_len: 163840 }] };
+        W.openEditModelDialog('custom|mine');
+        const pending = W.redetectEditModel();
+        W.openEditModelDialog('custom|mine');   // the dialog is built again: the old answer is not for it
+        release(); await pending;
+        expect((document.getElementById('emd-ctx') as HTMLInputElement).value).toBe('128');
+        delete catalogs['http://x/v1/models'];
+    });
+});

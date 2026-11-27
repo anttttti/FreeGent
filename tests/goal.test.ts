@@ -147,6 +147,29 @@ describe('goal loop', () => {
     });
 });
 
+describe('the completing save (EV020, EV021)', () => {
+    it('a verdict that could not be saved is not announced as reached', async () => {
+        const h = host([complete(), complete('verified')]);
+        let n = 0; h.write = async (c: string) => { if (++n >= 3) throw new Error('disk full'); h.file = c; };   // start, after the first turn, then the final write
+        const rec = await startGoal('g', h as GoalHost)!;
+        expect(rec.status).toBe('paused');
+        expect(h.notes.at(-1)).toMatch(/Goal paused.*could not be saved/);
+        expect(h.notes.at(-1)).not.toMatch(/Goal met/);
+    });
+    it('a note sent while the completion is being saved is refused, not lost', async () => {
+        const h = host([complete(), complete('verified')]);
+        let release!: () => void, writes = 0, refused: boolean | undefined;
+        h.write = async (c: string) => {
+            h.file = c;
+            if (++writes === 3) { refused = steerGoal('one more thing'); await new Promise<void>(r => (release = r)); }
+        };
+        const p = startGoal('g', h as GoalHost)!;
+        await new Promise(r => setTimeout(r, 20)); release?.();
+        expect((await p).status).toBe('done');
+        expect(refused).toBe(false);
+    });
+});
+
 describe('goal record and commands', () => {
     it('round-trips, including quotes and multi-line goals', () => {
         const g = { text: 'line one\nline "two"', status: 'blocked' as const, turns: 4, maxTurns: 20, note: 'which "db"?', updated: '2026-10-22T10:00:00Z', progress: ['turn 1: a', 'turn 2: b'] };

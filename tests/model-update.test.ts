@@ -3,7 +3,7 @@ import { showModelUpdateModal } from '../model-update.ts';
 
 const W = window as any;
 const removed = 'openrouter|baidu/ernie-5.5-flash-preview:free';
-const kept = 'kilo|dots-studio/dots-3-note-preview:free';
+const kept = 'kilo|nvidia/nemotron-3.5-lightning:free';
 const paused = 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free';
 const noKey = 'nvidia|nvidia/nemotron-3-ultra-550b-a55b';
 const custom = 'openrouter|test/retired:free';
@@ -162,5 +162,29 @@ describe('TokenHarbor discovery follows the API, not a fixed list', () => {
         expect(adds).not.toContain('tokenharbor|paid-model');
         expect(adds).not.toContain('tokenharbor|paid-model:free');
         expect(adds).not.toContain('tokenharbor|deepseek-v4.1-flash:free');
+    });
+});
+
+describe('Google catalog pages (EV013)', () => {
+    const googleIds = () => W.getAllModels().filter((m: any) => m.provider === 'google').map((m: any) => m.model);
+    const gem = (id: string) => ({ name: `models/${id}`, supportedGenerationMethods: ['generateContent'] });
+    async function run(pages: (token: string | null) => any) {
+        localStorage.setItem('fg_gemini_key', 'k');
+        vi.stubGlobal('fetch', vi.fn(async (input: string) => ({
+            ok: true,
+            json: async () => input.includes('generativelanguage') ? pages(new URL(input).searchParams.get('pageToken')) : null,
+        })));
+        showModelUpdateModal();
+        await vi.waitFor(() => expect(document.querySelector('#fg-mu-apply') || /up to date|No changes/.test(document.getElementById('fg-mu-body')?.textContent ?? '')).toBeTruthy());
+        return Array.from(document.querySelectorAll<HTMLInputElement>('#fg-mu-section-removes input')).map(el => el.dataset.spec);
+    }
+    it('reads the next page before proposing removals, and proposes none when it cannot', async () => {
+        const [first, ...rest] = googleIds();
+        expect(rest.length).toBeGreaterThan(0);
+        const removals = await run(t => t ? { models: rest.map(gem) } : { models: [gem(first)], nextPageToken: 'p2' });
+        expect(removals.filter(s => s?.startsWith('google|'))).toEqual([]);
+        document.body.innerHTML = '<div id="model-catalog-table"></div><div id="main-model-list"></div>';
+        const partial = await run(t => t ? null : { models: [gem(first)], nextPageToken: 'p2' });
+        expect(partial.filter(s => s?.startsWith('google|'))).toEqual([]);
     });
 });

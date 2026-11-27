@@ -58,7 +58,12 @@ type FilterKey = 'non-chat' | 'low-quota' | 'too-old' | 'no-tools';
 type FetchResult = {
     live:     LiveModel[];
     rejected: { model: LiveModel; reason: FilterKey }[];
+    /** The catalog was read in part (a next page was not read): absence from it proves nothing, so no removal is proposed. */
+    partial?: boolean;
 };
+
+// A zero price in any numeric spelling ("0", "0.00", "-0.0"); a missing or blank price is not zero.
+const _zero = (v: any) => v != null && String(v).trim() !== '' && Number(v) === 0;
 
 type Proposal = ModelCapabilities & {
     type:       'add' | 'remove';
@@ -353,11 +358,19 @@ async function _fetchGoogleModels(): Promise<FetchResult> {
         const key = typeof getGeminiKey === 'function' ? getGeminiKey() : (localStorage.getItem('fg_gemini_key') ?? '');
         if (!key) return { live: [], rejected: [] };
         // Google uses API key as query param — GET proxy keeps it server-side
-        const json = await _proxyGet(
-            `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}&pageSize=200`
-        );
+        const base = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}&pageSize=200`;
+        const json = await _proxyGet(base);
         if (!json) return { live: [], rejected: [] };
-        const models: any[] = json?.models ?? [];
+        const models: any[] = [...(json?.models ?? [])];
+        // The catalog is paged: read on (bounded), and when a page is missing say so, so models on it are not proposed for removal.
+        let next = json?.nextPageToken, pages = 1, partial = false;
+        while (next) {
+            if (pages++ >= 5) { partial = true; break; }
+            const more = await _proxyGet(`${base}&pageToken=${encodeURIComponent(next)}`);
+            if (!more) { partial = true; break; }
+            models.push(...(more.models ?? []));
+            next = more.nextPageToken;
+        }
 
         const live: LiveModel[] = [];
         const rejected: { model: LiveModel; reason: FilterKey }[] = [];
@@ -379,7 +392,7 @@ async function _fetchGoogleModels(): Promise<FetchResult> {
                 live.push(lm);
             }
         }
-        return { live, rejected };
+        return { live, rejected, partial };
     } catch {
         return { live: [], rejected: [] };
     }
@@ -468,7 +481,6 @@ async function _fetchNousModels(): Promise<FetchResult> {
         for (const m of all) {
             const id: string = m.id ?? '';
             // Free-tier models: ":free" ids, or $0 pricing (stealth/space-bunny-alpha has no suffix).
-            const _zero = (v: any) => v != null && Number(v) === 0;
             if (!id.endsWith(':free') && !(_zero(m.pricing?.prompt) && _zero(m.pricing?.completion))) continue;
             const lm: LiveModel = { id, name: m.name as string | undefined, created: created(m) };
             const modality: string = m.architecture?.modality ?? '';
@@ -549,7 +561,7 @@ function _diffProvider(
 
     // Remove proposals for catalog entries no longer seen from the API
     for (const entry of catalog) {
-        if (entry.provider !== provider) continue;
+        if (entry.provider !== provider || result.partial) continue;
         if (!allLiveIds.has(entry.model)) {
             out.push({
                 type: 'remove', provider, model: entry.model,
@@ -604,7 +616,7 @@ async function _computeProposals(): Promise<{ proposals: Proposal[]; errors: str
     } else {
         const orFree = orModels.filter((m: any) =>
             m.id?.endsWith(':free') ||
-            (String(m.pricing?.prompt ?? '1') === '0' && String(m.pricing?.completion ?? '1') === '0')
+            (_zero(m.pricing?.prompt) && _zero(m.pricing?.completion))
         );
         // Removal check against the free models: a $0 id without ":free" (inclusionai/ling-3.1-flash) stays listed when it becomes paid
         const orAllIds = new Set(orModels.map((m: any) => m.id));

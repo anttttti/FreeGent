@@ -1146,6 +1146,7 @@ async function deleteChat(id) {
     const list = getChatList().filter(c => c.id !== id);
     saveChatList(list);
     clearChatStorage(id);
+    (window as any).msgQueue?.dropChat?.(id); setTimeout(() => (window as any)._processQueue?.(), 0);   // its queued messages would sit at the head and hold back the other chats'
     if (id === activeChatId) {
         activeChatId = null;
         if (list.length > 0) {

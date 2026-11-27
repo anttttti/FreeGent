@@ -871,6 +871,7 @@ function _onNewModelProviderChange() {
 function showAddCustomModelForm() {
     const f = (document.getElementById('add-custom-model-form') as HTMLInputElement);
     if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
+    _detectSeq++;
     _onNewModelProviderChange();
 }
 
@@ -882,16 +883,20 @@ function _setDetectStatus(id: string, text: string, bad = false) {
     if (el) { el.textContent = text; el.style.color = bad ? 'var(--err,#c44)' : 'var(--muted)'; }
 }
 
+let _detectSeq = 0;   // a detection answers only the form state it was asked for: a later one, another address or a closed form discards it (EV031)
 async function detectNewModel() {
     const val = (id: string) => ((document.getElementById(id) as HTMLInputElement | null)?.value || '').trim();
     _setDetectStatus('new-model-detect-status', 'Detecting…');
-    const r = await detectEndpoint(val('new-model-url'), val('new-model-key'), { pageProtocol: location.protocol });
+    const seq = ++_detectSeq, asked = val('new-model-url'), form = document.getElementById('add-custom-model-form');
+    const r = await detectEndpoint(asked, val('new-model-key'), { pageProtocol: location.protocol });
+    if (seq !== _detectSeq || val('new-model-url') !== asked || document.getElementById('add-custom-model-form') !== form || form?.style.display === 'none') return;
     if (!r.ok) { _setDetectStatus('new-model-detect-status', r.error || 'Detection failed.', true); return; }
     _newModelDetected = r.models;
     const dl = document.getElementById('new-model-id-list');
     if (dl) dl.innerHTML = r.models.map(m => `<option value="${escapeHtml(m.id)}"></option>`).join('');
     const set = (id: string, v: string) => { const el = document.getElementById(id) as HTMLInputElement | null; if (el) el.value = v; };
     set('new-model-api', r.apiFormat);
+    if (r.baseUrl && r.apiFormat !== 'ollama') set('new-model-url', r.baseUrl);   // the address the list came from is the one routed to
     const first = r.models[0];
     set('new-model-id', first.id);
     _onNewModelIdChange();
@@ -915,7 +920,10 @@ async function redetectEditModel() {
     const key = val('emd-model-key');
     const model = key.slice(key.indexOf('|') + 1);
     _setDetectStatus('emd-detect-status', 'Detecting…');
-    const r = await detectEndpoint(val('emd-url'), val('emd-api-key'), { pageProtocol: location.protocol });
+    const keyEl = document.getElementById('emd-model-key'), asked = val('emd-url');
+    const r = await detectEndpoint(asked, val('emd-api-key'), { pageProtocol: location.protocol });
+    // The dialog may have been closed or opened for another model while the server answered.
+    if (document.getElementById('emd-model-key') !== keyEl || val('emd-model-key') !== key || val('emd-url') !== asked) return;
     if (!r.ok) { _setDetectStatus('emd-detect-status', r.error || 'Detection failed.', true); return; }
     const m = r.models.find(x => x.id === model);
     if (!m) { _setDetectStatus('emd-detect-status', `${r.server} serves ${r.models.map(x => x.id).join(', ')}, not "${model}".`, true); return; }

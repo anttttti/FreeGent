@@ -68,6 +68,14 @@ export function shift(): QueuedMsg | undefined {
 
 /** Drop every queued message (the conversation they were written for is being replaced). */
 export function clear(): void { if (_queue.length) { _queue.length = 0; _notify(); } }
+/** Drop the messages written in one chat (the chat was deleted: its message at the head would block the others for good). */
+export function dropChat(chatId: string): void {
+    const n = _queue.length;
+    for (let i = _queue.length - 1; i >= 0; i--) if (_queue[i].chatId === chatId) _queue.splice(i, 1);
+    if (_queue.length !== n) _notify();
+}
+/** Put back, ahead of anything queued since, messages a failed replacement had cleared. */
+export function restore(msgs: readonly QueuedMsg[]): void { if (msgs.length) { _queue.unshift(...msgs); _notify(); } }
 export function peek(): QueuedMsg | undefined           { return _queue[0]; }
 export function getAll(): readonly QueuedMsg[]          { return [..._queue]; }
 export function size(): number                          { return _queue.length; }

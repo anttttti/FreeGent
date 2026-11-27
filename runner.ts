@@ -435,11 +435,13 @@ function _unverifiedDone(tasks: Task[]): string {
 // whose dependency had a higher id; it was deferred for the whole run, never retried when the dependency finished, and the tasks behind it were refused
 // in turn until "5 consecutive failures" paused the run with six of ten tasks open (kanbanflow set 2, depends10).
 const _idKey = (x: any) => { const s = String(x ?? '').trim(); return /^\d+$/.test(s) ? String(parseInt(s, 10)) : s; };
-function _unmetDeps(t: Task, tasks: Task[]): string[] {
+export function _unmetDeps(t: Task, tasks: Task[]): string[] {
     const deps = String(t.fm.depends ?? '').split(/[\s,]+/).filter(Boolean);
     if (!deps.length) return [];
-    const byId = new Map(tasks.map(x => [_idKey(taskIdOf(x)), x] as [string, Task]));
-    return deps.filter(d => { const dt = byId.get(_idKey(d)); return !dt || canonTaskStatus(dt.fm.status) !== 'done'; });
+    // Two files can share an id: as in the start gate (qa.ts), the dependency is met only when every one of them is done, whatever order they load in.
+    const byId = new Map<string, Task[]>();
+    for (const x of tasks) { const k = _idKey(taskIdOf(x)); byId.set(k, [...(byId.get(k) ?? []), x]); }
+    return deps.filter(d => { const dts = byId.get(_idKey(d)); return !dts || dts.some(dt => canonTaskStatus(dt.fm.status) !== 'done'); });
 }
 
 const _MISSING_FILE_RE = /\b(?:not found|missing|does not exist|doesn't exist|no such file|cannot find|can't find|could not find|not present|absent)\b/i;

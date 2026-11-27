@@ -41,4 +41,11 @@ describe('deep research ranking counts distinct queries', () => {
         const r = await _drSearch(['one', 'two'], new Set());
         expect(r.map((x: any) => [x.url, x.hits])).toEqual([['y', 2], ['x', 1]]);
     });
+    it('skips a malformed row and lets a later row fill a blank title or snippet (EV001, EV002)', async () => {
+        const { _drSearch } = await import('../deep-research.ts');
+        (globalThis as any).executeToolAsync = async (_t: string, { query }: any) =>
+            ({ results: query === 'one' ? [null, { url: 'x' }, { url: 'x', title: 'T', snippet: 'evidence' }] : [{ url: 'x' }] });
+        const r = await _drSearch(['one', 'two'], new Set());
+        expect(r).toEqual([{ url: 'x', title: 'T', snippet: 'evidence', hits: 2 }]);
+    });
 });

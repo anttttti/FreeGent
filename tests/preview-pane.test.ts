@@ -31,6 +31,9 @@ describe('selectPreviewFile', () => {
     it('accepts a quoted answer, rejects a hallucinated one and falls back to an html file', async () => {
         expect(await selectPreviewFile(['a.css', 'b.md'], async () => '"b.md"\n')).toBe('b.md');
         expect(await selectPreviewFile(['a.css', 'p.html'], async () => 'nope.txt')).toBe('p.html');
+        // EV012: a path that itself starts with a hyphen or ends with a quote is taken as it is
+        expect(await selectPreviewFile(['a.css', '-plan.pdf'], async () => '-plan.pdf')).toBe('-plan.pdf');
+        expect(await selectPreviewFile(['a.css', 'draft.pdf"'], async () => 'draft.pdf"')).toBe('draft.pdf"');
         expect(await selectPreviewFile(['a.css', 'b.md'], async () => { throw new Error('x'); })).toBeNull();
     });
 });

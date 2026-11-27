@@ -26,11 +26,11 @@ import { getChatHistory, setChatHistory } from './chat-history.js';
 import { hashContent } from './local-sync.js';   // the one content fingerprint: 53 bits plus the length (a 32-bit FNV here let a changed file read as unchanged, X013)
 import { WORKSPACE_WRITE_TOOLS } from './tool-effects.js';
 import type { Session } from './session.js';
-import { pruneSurface } from './session.js';
+import { pruneSurface, eventMessage } from './session.js';
 
-// Normalize path for deduplication: strip leading "local/" so that "local/foo.md" and
-// "foo.md" are treated as the same file (the server serves both from the same store).
-export function _normPath(p: string): string { return (p || '').replace(/^local\//, ''); }
+// Path as a key for read bookkeeping. "local/foo.md" (the attached Local Folder) and "foo.md" (the workspace) are two files: one must not
+// stand in for the other's reads (a count of six workspace reads suppressed the first read of the Local Folder file, EV029).
+export function _normPath(p: string): string { return p || ''; }
 
 export function resetSeenReadFiles(): void { setSeenReadFiles(new Map()); setSeenListFiles(new Set()); }
 
@@ -444,20 +444,17 @@ const _PRUNE_MIN_CHARS   = 800;
 function _clen(c: any): number { return typeof c === 'string' ? c.length : JSON.stringify(c).length; }
 
 type _CallMeta = { name: string; path: string | null; from: number; to: number };
-// tool_call_id → tool name, path, and read line range (a whole-file read is [1, Infinity]).
-function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
-    const callMeta = new Map<string, _CallMeta>();
-    for (const m of msgs) {
-        if (m.role !== 'assistant' || !m.tool_calls) continue;
-        for (const tc of m.tool_calls) {
-            const name = tc.function?.name; if (!name) continue;
-            let a: any = {};
-            try { a = JSON.parse(tc.function.arguments || '{}'); } catch {}
-            callMeta.set(tc.id, { name, path: a.path ?? a.file_path ?? a.filename ?? null,
-                from: Number(a.start_line) || 1, to: Number(a.end_line) || Infinity });
-        }
+// tool_call_id → tool name, path, and read line range (a whole-file read is [1, Infinity]). A provider can reuse an id in a later response:
+// the map is filled message by message in surface order, so a result is read against the call block that precedes it, not a later one.
+function _noteCalls(callMeta: Map<string, _CallMeta>, m: any): void {
+    if (m?.role !== 'assistant' || !m.tool_calls) return;
+    for (const tc of m.tool_calls) {
+        const name = tc.function?.name; if (!name) continue;
+        let a: any = {};
+        try { a = JSON.parse(tc.function.arguments || '{}'); } catch {}
+        callMeta.set(tc.id, { name, path: a.path ?? a.file_path ?? a.filename ?? null,
+            from: Number(a.start_line) || 1, to: Number(a.end_line) || Infinity });
     }
-    return callMeta;
 }
 
 // True when a later read of the same file covers this read's line range with no write to the file
@@ -471,7 +468,8 @@ function _callMetaMap(msgs: any[]): Map<string, _CallMeta> {
 // lines inline, and history clipping cuts a long result (codex R62). A result that was cut is not a copy of the range.
 function _retainsRange(content: any, meta: _CallMeta): boolean {
     const text = typeof content === 'string' ? content : JSON.stringify(content);
-    if (/\[…\d+ chars not shown\]|chars not shown\]|"truncated":\s*true/.test(text)) return false;
+    // Every cut the history formatter makes: "[…N chars not shown]", "[…truncated. Use start_line…]", "[Omitted N block(s)…]".
+    if (/\[…[^\]\n]*(?:not shown|truncated)|\[Omitted \d+ block|"truncated":\s*true/.test(text)) return false;
     try {
         const j = JSON.parse(text.replace(/^\[[^\]]*\]\n/, ''));
         if (j && typeof j === 'object') {
@@ -509,11 +507,12 @@ function _prunedReadStub(meta: _CallMeta, cover: _CallMeta, chars: number): stri
  * that a later read of the same file covers is replaced by a stub that names the covering read.
  */
 export function pruneSessionHistory(sess: Session): number {
-    const callMeta = _callMetaMap(sess.deriveMessages());
+    const callMeta = new Map<string, _CallMeta>();
     // tool/result events in surface (message) order; pos is the surface position.
     const results: Array<{ pos: number; seq: number; d: any; meta: _CallMeta; content: any }> = [];
     sess.surface.forEach((seq, pos) => {
         const ev = sess.events[seq];
+        if (ev?.type === 'assistant/message') { const m = eventMessage(ev); _noteCalls(callMeta, m); return; }
         if (ev?.type !== 'tool/result') return;
         const d = ev.data as any;
         const meta = callMeta.get(d.callId);

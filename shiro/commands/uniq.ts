@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readInput } from './flags';
+import { parseArgs, readOperandBytes } from './flags';
 export const uniq: Command = {
   name: "uniq",
   description: "Report or omit repeated lines",
@@ -14,9 +14,11 @@ export const uniq: Command = {
     const ignoreCase = flags.i;
 
     try {
-      const { content } = await readInput(
-        positional, ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath
-      );
+      // uniq [INPUT [OUTPUT]]: no operand or "-" is stdin; the second operand is the file the result is written to.
+      if (positional.length > 2) throw new Error(`extra operand '${positional[2]}'`);
+      const content = positional.length && positional[0] !== "-"
+        ? new TextDecoder().decode(await readOperandBytes(ctx, positional[0]))
+        : ctx.stdin;
       const lines = content.split("\n");
       // Remove trailing empty from final newline
       if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -29,7 +31,7 @@ export const uniq: Command = {
       for (const line of lines) {
         const key = getComparisonKey(line, skipFields, skipChars, checkChars, ignoreCase);
 
-        if (key === prevKey) {
+        if (count > 0 && key === prevKey) {   // the first line starts a group even when its key is empty
           count++;
         } else {
           if (count > 0) emitLine(prev, count, flags, output);
@@ -40,7 +42,9 @@ export const uniq: Command = {
       }
       if (count > 0) emitLine(prev, count, flags, output);
 
-      ctx.stdout += output.join("\n") + (output.length > 0 ? "\n" : "");
+      const text = output.join("\n") + (output.length > 0 ? "\n" : "");
+      if (positional[1] && positional[1] !== "-") await ctx.fs.writeFile(ctx.fs.resolvePath(positional[1], ctx.cwd), text);
+      else ctx.stdout += text;
       return 0;
     } catch (e: unknown) {
       ctx.stderr += `uniq: ${e instanceof Error ? e.message : e}\n`;
@@ -60,8 +64,8 @@ function getComparisonKey(
 
   // Skip fields
   if (skipFields > 0) {
-    const fields = line.split(/\s+/);
-    key = fields.slice(skipFields).join(" ");
+    // A field is the blanks before a word and the word; what follows the skipped fields is compared as it is written.
+    key = line.slice((new RegExp(`^(?:[ \\t]*[^ \\t]+){0,${skipFields}}`).exec(line) as RegExpExecArray)[0].length);
   }
 
   // Skip characters

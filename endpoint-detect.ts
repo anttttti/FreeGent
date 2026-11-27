@@ -8,6 +8,8 @@ export interface DetectResult {
     apiFormat: 'openai' | 'vllm' | 'ollama';
     server: string;          // 'vLLM' | 'Ollama' | 'llama.cpp' | 'LM Studio' | 'OpenAI-compatible'
     error?: string;
+    /** The address the model list was read from (…/v1): the one to save, so that generation goes where detection went. */
+    baseUrl?: string;
 }
 
 export const LOCAL_ENDPOINT_PRESETS = [
@@ -100,5 +102,5 @@ export async function detectEndpoint(rawUrl: string, key = '', opts: { fetch?: t
             } catch { /* not llama.cpp */ }
         }
     }
-    return { ok: true, models, apiFormat, server };
+    return { ok: true, models, apiFormat, server, baseUrl: v1 };
 }

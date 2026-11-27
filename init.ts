@@ -872,10 +872,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch {}
 
     // Wait for the current Worker answer before sending a keyless visitor to Credentials. A failed
-    // lookup is unknown, not disabled; re-check saved keys in case one was entered while it ran.
+    // lookup is unknown, not disabled; re-check saved keys in case one was entered while it ran. The visitor is sent only if they have not
+    // chosen a destination meanwhile (a Settings tab or a project they opened stays), and a lookup that failed is decided when a later one
+    // (the refocus refresh) first learns the answer.
+    const _viewNow = () => document.querySelector('.left-rail .rail-nav-btn.active')?.getAttribute('data-tab') ?? '';
+    const _startView = _viewNow();
+    let _startupDecided = false;
+    const _startupPrompt = () => {
+        if (_startupDecided) return;
+        if (_viewNow() !== _startView) { _startupDecided = true; return; }   // they went somewhere themselves
+        if (storedCredentialValues().length) { _startupDecided = true; return; }
+        if (!getCfKeysDiagnostics().guestKnown) return;   // unknown: asked again after the next lookup
+        _startupDecided = true;
+        if (!guestModeOn()) showSettings('credentials');
+    };
+    const _startupRetry = () => { if (!_startupDecided) setTimeout(() => cfWorkerKeysSettled().then(_startupPrompt), 0); };
     workerKeys?.then(() => cfWorkerKeysSettled()).then(() => {   // the newest lookup: a refocus meanwhile may have superseded the first
-        if (getCfKeysDiagnostics().guestKnown && !guestModeOn() && !storedCredentialValues().length)
-            showSettings('credentials');
+        _startupPrompt();
+        if (!_startupDecided) { window.addEventListener('focus', _startupRetry); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _startupRetry(); }); }
     });
 
     // ── Suspension detection — log only, do NOT abort ─────────────────────────

@@ -64,3 +64,16 @@ describe('PowerPoint relationship targets with parent segments (U005)', () => {
         }
     });
 });
+
+describe('PowerPoint index markup variants (EV024, EV025)', () => {
+    const slides = async (pres: string, rels: string) => pptxSlides(await zipFiles([
+        { name: 'ppt/presentation.xml', data: enc(pres) }, { name: 'ppt/_rels/presentation.xml.rels', data: enc(rels) },
+        ...[1, 2].map(n => ({ name: `ppt/slides/slide${n}.xml`, data: enc(`<x xmlns:a="${A}"><a:p><a:r><a:t>Slide ${n}</a:t></a:r></a:p></x>`) }))]));
+    const rels = `<Relationships><Relationship Id="rId1" Target="slides/slide1.xml"/><Relationship Id='rId2' Target='slides/slide2.xml'/></Relationships>`;
+    it('reads a default namespace and single quotes, and ignores commented-out entries', async () => {
+        const order = '<sldId id="256" r:id=\'rId2\'/><sldId id="257" r:id="rId1"/>';
+        expect(await slides(`<presentation xmlns="${P}" xmlns:r="${R}"><sldIdLst>${order}</sldIdLst></presentation>`, rels)).toEqual(['Slide 2', 'Slide 1']);
+        expect(await slides(`<p:presentation xmlns:p="${P}" xmlns:r="${R}"><p:sldIdLst><p:sldId id="1" r:id="rId2"/><!-- <p:sldId id="2" r:id="rId1"/> --></p:sldIdLst></p:presentation>`,
+            rels.replace('</Relationships>', '<!-- <Relationship Id="rId2" Target="slides/slide1.xml"/> --></Relationships>'))).toEqual(['Slide 2']);
+    });
+});

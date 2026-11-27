@@ -3,11 +3,13 @@
 // (codex report 8, cases 207-209). Values go through yaml-scalar.ts both ways.
 import { fmQuote, fmQuoteText, fmUnquote } from './yaml-scalar.js';
 
-const FM_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/;
+const FM_RE = /^(\uFEFF?)---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/;
 
 export interface SplitFrontmatter {
     /** The block's lines, without the `---` fences. */
     lines: string[];
+    /** A byte-order mark in front of the opening fence (a text file kept as it was uploaded); written back unchanged. */
+    bom: string;
     /** Everything after the closing fence's line break. */
     body: string;
     /** Whether a line break followed the closing fence (kept when the block is rewritten). */
@@ -18,7 +20,7 @@ export interface SplitFrontmatter {
 export function splitFrontmatter(content: string): SplitFrontmatter | null {
     const m = String(content ?? '').match(FM_RE);
     if (!m) return null;
-    return { lines: m[1].split(/\r?\n/), body: content.slice(m[0].length), closing: m[2] };
+    return { bom: m[1], lines: m[2].split(/\r?\n/), body: content.slice(m[0].length), closing: m[3] };
 }
 
 /** `key: value` lines → a map of unquoted values (a line without a colon is ignored; the last duplicate wins). */
@@ -66,5 +68,5 @@ export function buildFrontmatter(fields: Record<string, unknown>, quote = true):
 export function setFrontmatterFields(content: string, fields: Record<string, unknown>, opts: { missing?: 'top' | 'end'; quote?: boolean } = {}): string {
     const s = splitFrontmatter(content);
     if (!s) return `${buildFrontmatter(fields, opts.quote !== false)}\n${content}`;
-    return `---\n${setFmLines(s.lines, fields, opts).join('\n')}\n---${s.closing ? '\n' : ''}${s.body}`;
+    return `${s.bom}---\n${setFmLines(s.lines, fields, opts).join('\n')}\n---${s.closing ? '\n' : ''}${s.body}`;
 }

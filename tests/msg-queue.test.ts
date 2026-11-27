@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-    enqueue, cancel, setMode, move, shift, peek, getAll, size, subscribe,
+    enqueue, cancel, dropChat, restore, clear, setMode, move, shift, peek, getAll, size, subscribe,
     type QueueMode,
 } from '../msg-queue.js';
 
@@ -219,5 +219,16 @@ describe('steering semantics — queue order under mode changes', () => {
         enqueue('first', 'steering');
         enqueue('second', 'queued');
         expect(peek()?.mode).toBe('steering');
+    });
+});
+
+describe('dropChat and restore (EV009, EV010)', () => {
+    it('dropChat removes one chat\'s messages only, restore puts cleared ones back at the head', () => {
+        enqueue('a', 'queued', 'A'); enqueue('b', 'queued', 'B'); enqueue('a2', 'queued', 'A');
+        dropChat('A');
+        expect(getAll().map(m => m.text)).toEqual(['b']);
+        const parked = getAll(); clear(); enqueue('later', 'queued', 'B');
+        restore(parked);
+        expect(getAll().map(m => m.text)).toEqual(['b', 'later']);
     });
 });

@@ -121,7 +121,7 @@ export function isGoalPrompt(text: string): boolean {
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
-interface Run { rec: GoalRecord; host: GoalHost; stop: boolean; stopNote: string; steer: string[]; done: Promise<GoalRecord>; wake?: () => void }
+interface Run { rec: GoalRecord; host: GoalHost; stop: boolean; stopNote: string; steer: string[]; closing?: boolean; done: Promise<GoalRecord>; wake?: () => void }
 let _run: Run | null = null;
 
 export const goalRunning = (): boolean => _run !== null;
@@ -130,12 +130,15 @@ const firstLine = (s: string): string => (s.trim().split('\n').find(l => l.trim(
 const nowIso = () => new Date().toISOString().slice(0, 19) + 'Z';
 
 async function _save(r: Run, patch: Partial<GoalRecord> = {}): Promise<boolean> {
+    const before = { status: r.rec.status, note: r.rec.note };
     Object.assign(r.rec, patch, { updated: nowIso() });
     r.host.onChange?.({ ...r.rec });
     try { await r.host.write(serializeGoal(r.rec)); return true; }
     catch (e: any) {
         // The project was cleared or replaced under the goal (or the file cannot be written): there is nothing to keep working in.
         r.stop = true; r.stopNote = `the goal could not be saved (${e?.message ?? e}), so it was stopped`;
+        // A verdict that was not saved is not reported as reached: the saved record still says what it said, and the notice says why.
+        if (patch.status && patch.status !== 'active') { r.rec.status = before.status === 'active' ? 'paused' : before.status; r.rec.note = r.stopNote; r.host.onChange?.({ ...r.rec }); }
         return false;
     }
 }
@@ -186,7 +189,7 @@ async function _loop(r: Run, resuming: boolean): Promise<GoalRecord> {
             if (signal === 'blocked') { await _save(r, { status: 'blocked', note: t.text.trim().slice(0, 400) || 'needs your input' }); break; }
             if (signal === 'complete') {
                 // A note the user added while this turn ran has not been read by the agent: the goal is not done on an answer that predates it.
-                if (verifying && !r.steer.length) { await _save(r, { status: 'done', note: '' }); break; }
+                if (verifying && !r.steer.length) { r.closing = true; await _save(r, { status: 'done', note: '' }); break; }   // closing: a note sent during the write would be lost
                 verifying = !verifying; await _save(r); continue;
             }
             // Not finished. A verification that did not confirm sends the loop back to work.
@@ -255,7 +258,7 @@ export function stopGoal(note = 'stopped'): boolean {
 }
 /** A message from the user while the goal runs: part of the next turn's prompt. */
 export function steerGoal(text: string): boolean {
-    if (!_run || !text.trim()) return false;
+    if (!_run || _run.closing || !text.trim()) return false;
     _run.steer.push(text.trim().slice(0, 1000));
     return true;
 }

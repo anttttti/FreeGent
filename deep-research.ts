@@ -89,11 +89,13 @@ export async function _drSearch(queries, visited) {
     for (const res of settled) {
         const seen = new Set();   // one query counts a URL once, however many rows repeat it
         for (const r of (res?.results || [])) {
-            if (!r.url || visited.has(r.url) || seen.has(r.url)) continue;
+            if (!r?.url || visited.has(r.url)) continue;   // a malformed row (null, no url) is no hit
+            const snippet = String(r.snippet || r.summary || '').slice(0, 300), cur = byUrl.get(r.url);
+            if (cur) {
+                if (!seen.has(r.url)) cur.hits++;
+                cur.title ||= r.title || ''; cur.snippet ||= snippet;   // a later row fills what the first left blank
+            } else byUrl.set(r.url, { title: r.title || '', url: r.url, snippet, hits: 1 });
             seen.add(r.url);
-            const cur = byUrl.get(r.url);
-            if (cur) cur.hits++;
-            else byUrl.set(r.url, { title: r.title || '', url: r.url, snippet: (r.snippet || r.summary || '').slice(0, 300), hits: 1 });
         }
     }
     return [...byUrl.values()].sort((a, b) => b.hits - a.hits);
