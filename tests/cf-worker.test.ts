@@ -477,6 +477,7 @@ describe('CF Worker guest quota', () => {
         const down = await worker.fetch(call(GROQ, { session: s }), { ...ON, FG_GUEST_COUNTER: { idFromName: () => 'x', get: () => ({ fetch: async () => { throw new Error('down'); } }) } });
         expect(down.status).toBe(503);
         expect(down.headers.get('X-FG-Guest')).toBeNull();
+        expect(down.headers.get('Retry-After')).toBe('15');   // so the client cools the model for 15 s, not as a provider quota
     });
 
     it('caps guest calls per network per UTC day (FG_GUEST_DAILY), and starts again the next day', async () => {

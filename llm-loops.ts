@@ -22,7 +22,7 @@ import { compactHistory } from './llm-shared.js';
 import { _lcsDiff, _diffContent } from './diff-utils.js';
 import { type RenderAdapter } from './render-adapter.js';
 import { KEYS, getProvider, getTemperature, modelSupportsThinking, getWorkerThinkingBudget, thinkingLevelBudget, getOAIContextTokens, getEndpointContextTokens, getAgentMaxSteps, getAgentProactiveCompact, getAgentCompactTokens, getContextThreshold, isContextSizeKnown, getAgentCompactAt, estimateTokens, getSamplingParams, getLocalApiProxy, ls, enabledTools, getActiveMainModelList, getMainModelList, mainModelListIsEmptyByChoice, getEndpointRotation, getPreserveThinking, recordModelSuccess } from './config.js';
-import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, openSyntaxErrors, isEmptyArgRefusal } from './tools.js';
+import { executeToolAsync, toolLabel, fetchSaidNoStore, resetLookalikeRefusals, brokenFileReport, _callerHasTool, openSyntaxErrors, isEmptyArgRefusal } from './tools.js';
 import { newVerification, noteStep as noteVerification } from './verification.js';
 import { taskPolicy } from './task-policy.js';
 import { runCompletionGates, writesTaskFile, lacksCriteria } from './completion-gates.js';
@@ -1538,7 +1538,7 @@ async function runTurn(endpoint: any, placeholder: RenderAdapter, { toolFilterOv
                 reactiveFired: _reactiveFired,
                 firstUserText: _firstUser?.content ?? '', task: _originalTask(_histR(_s)),
                 editRequired: taskPolicy.editRequired(), changeRequired: taskPolicy.changeRequired(), gradedTestIds: () => taskPolicy.gradedTestIds(_task),
-                isScratchPath, brokenFiles: brokenFileReport, shellCommands: _shellCmds,
+                isScratchPath, brokenFiles: brokenFileReport, hasTool: _callerHasTool(null), shellCommands: _shellCmds,
                 planning: typeof getMode === 'function' && getMode() === 'cowork' && (() => { const calls = _histR(_s).flatMap((m: any) => m.tool_calls || []); return calls.some(writesTaskFile); })(),
                 noCriteria: async () => { const out: string[] = []; for (const f of await agentListFiles().catch(() => [])) { const p = f.name; if (/^(?:local\/)?fg-tasks\/\d+-/.test(p)) { try { if (lacksCriteria(await agentReadFile(p))) out.push(p); } catch {} } } return out; },
                 taskText: async () => { try { let t = ''; for (const f of await agentListFiles()) if (/^(?:local\/)?fg-tasks\/\d+-/.test(f.name)) t += (await agentReadFile(f.name)).toLowerCase() + '\n'; return t; } catch { return ''; } },

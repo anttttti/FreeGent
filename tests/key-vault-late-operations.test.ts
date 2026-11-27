@@ -41,6 +41,26 @@ describe('review: disabling a passkey vault respects later transitions', () => {
   });
 });
 
+describe('review: Turn off with no Web Locks', () => {
+  it('does not write back the older value when a save landed during its decrypt', async () => {
+    await enabled();
+    const entered = deferred(), release = deferred();
+    const decrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+    let calls = 0;
+    vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {
+      if (++calls === 1) { entered.resolve(); await release.promise; }   // only Turn off's own decrypt waits
+      return decrypt(...args);
+    });
+    const outcome = disableKeyVault().then(() => 'resolved', () => 'rejected');
+    await entered.promise;
+    localStorage.setItem('fg_groq_key', 'newer-review-groq-credential');
+    await flushKeyVault();
+    release.resolve();
+    expect(await outcome).toBe('rejected');
+    expect(keyVaultEnabled()).toBe(true);
+  });
+});
+
 describe('review: failed saves remain visible until persisted', () => {
   it('does not report success for a later unrelated save while an earlier credential remains unsaved', async () => {
     await enabled();

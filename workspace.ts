@@ -436,11 +436,11 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
             const names = (await listFsaFiles(null, '', 0, true)).filter(n => !n.endsWith('/'));
             await Promise.all(names.map(async name => {
                 try {
-                    const { content, encoding } = await _readFsaRecord(name);
+                    const { content, encoding, exact } = await _readFsaRecord(name);
                     const h = _ckptHash(content);
                     localHashes[name] = h;
                     const op = prevLocalH[name] === undefined ? 'add' : prevLocalH[name] !== h ? 'modify' : null;
-                    if (op) localDelta.push({ name, content, op, ...(encoding ? { encoding } : {}) });
+                    if (op) localDelta.push({ name, content, op, ...(encoding ? { encoding } : {}), ...(exact ? { exact } : {}) });
                 } catch { localUnread.push(name); if (prevLocalH[name] !== undefined) localHashes[name] = prevLocalH[name]; }
             }));
             for (const name of Object.keys(prevLocalH)) {
@@ -476,6 +476,7 @@ async function restoreCheckpointWorkspace(chatId, ckptId) {
         }
         for (const f of ckpts[i].localDelta) {
             if (f.content === null) { delete localState[f.name]; delete localEnc[f.name]; }
+            else if (f.exact) { localState[f.name] = f.exact; localEnc[f.name] = 'base64'; }   // the bytes of a text file that does not re-encode to itself
             else { localState[f.name] = f.content; if (f.encoding) localEnc[f.name] = f.encoding; else delete localEnc[f.name]; }
         }
     }
@@ -754,15 +755,16 @@ async function _readBase64Record(path: string, b64: string): Promise<string> {
 }
 
 /** A local-folder file as a workspace record: text when it decodes as text, otherwise base64 with its encoding. */
-async function _readFsaRecord(name: string): Promise<{ content: string; encoding: string | null }> {
+async function _readFsaRecord(name: string): Promise<{ content: string; encoding: string | null; exact?: string }> {
     const { dir, filename } = await fsaNavigate(name);
     const bytes = new Uint8Array(await (await (await dir.getFileHandle(filename)).getFile()).arrayBuffer());
     const text = decodeTextBytes(bytes);
-    // Text only when the bytes come back exactly from its UTF-8 encoding: a Latin-1 or UTF-16 file, or bytes such as 80 81 that merely decode as windows-1252, would be
-    // written back as different UTF-8 bytes by a restore (Sol 6.2 review of fbc2c53).
+    // A Latin-1 or UTF-16 file, or bytes such as 80 81 that merely decode as windows-1252, would be written back as different UTF-8 bytes by a restore (Sol 6.2 review of fbc2c53).
     if (text !== null) {
         const back = new TextEncoder().encode(text);
         if (back.length === bytes.length && back.every((v, i) => v === bytes[i])) return { content: text, encoding: null };
+        // Text that would not come back byte for byte (a BOM, Latin-1, UTF-16): the record shows the text, as every reader of a delta expects, and `exact` holds the bytes for a restore.
+        return { content: text, encoding: null, exact: _uint8ToBase64(bytes) };
     }
     return { content: _uint8ToBase64(bytes), encoding: 'base64' };
 }

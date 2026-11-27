@@ -8,6 +8,17 @@ const NOW = Date.UTC(2026, 9, 17, 4, 17, 36);
 
 afterEach(() => { for (const k of [..._endpointCooldown.keys()]) _endpointCooldown.delete(k); });
 
+describe("the Worker's guest counter outage", () => {
+    it('cools the model for seconds, also one with a weekly catalog cooldown, and not its siblings', () => {
+        const err = new Error('HTTP 503: The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials');
+        _markCooldown({ provider: 'tokenharbor', model: 'mimo-v2.5:free' }, 15_000, err);
+        expect(getCooldownRemaining('tokenharbor|mimo-v2.5:free')).toBe(15);
+        expect(getCooldownRemaining('tokenharbor|deepseek-v4.1-flash:free')).toBe(0);
+        _markCooldown({ provider: 'groq', model: 'x' }, null, err);
+        expect(getCooldownRemaining('groq|x')).toBe(15);   // no hour for a first refusal
+    });
+});
+
 describe('MoonMath quota policies', () => {
     afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 

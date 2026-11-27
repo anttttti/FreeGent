@@ -255,7 +255,7 @@ const _SEARCH_LINE_DISPLAY   = 500;
 // ceiling, else (no role restriction, e.g. the WebUI) everything. Recovery advice must only name
 // these — v0.64: the headless Director has write_file but not replace_in_file/apply_patch, and the
 // guard below told it to use them: 28 attempts in the SWE runs, all rejected, 77 shrink rejections.
-function _callerHasTool(context): (tool: string) => boolean {
+export function _callerHasTool(context): (tool: string) => boolean {
     if (context?.allowedTools instanceof Set) return t => context.allowedTools.has(t);
     // The main agent: what its schema actually offers this turn — enabled tools, the role ceiling and the per-turn filter.
     // (v0.70 review: advice named replace_in_file after it had been disabled.) Without activeTools, the role ceiling alone.
@@ -914,6 +914,19 @@ async function _handleUndoWrite(args: any, context: any = null) {
     // main agent's, and restoring one here changed the real workspace in the middle of the worker's run.
     if (context) {
         if (!context.staging.has(args.path) && !context.binary?.has(args.path)) return { error: `undo_write: this worker has not changed "${args.path}".` };
+        // After an execute_code of this worker the change is also in the shared workspace: it goes back from the run-start copy (workers.ts _revertWorkerDiskEdits does the same on a retry).
+        if (context.onDisk?.has(args.path)) {
+            const err = await _withWorkspaceRunLock(async () => {
+                const pre = context.snapshot?.preimage ? await context.snapshot.preimage(args.path) : { kind: 'unknown' };
+                const epoch = workspaceEpoch();
+                if (pre.kind === 'absent') await agentDeleteFile(args.path, { epoch });
+                else if (pre.kind === 'content') await agentWriteFile(args.path, pre.text, null, { epoch });
+                else return `undo_write: "${args.path}" was changed by this worker's code and no copy of the original was taken, so it was not restored.`;
+                context.onDisk.delete(args.path);
+                return '';
+            });
+            if (err) return { error: err };
+        }
         context.staging.delete(args.path); context.binary?.delete(args.path);
         return { success: true, path: args.path, note: 'Restored the file as it was before this worker changed it.' };
     }
@@ -939,11 +952,11 @@ async function _handleUndoWrite(args: any, context: any = null) {
         }
         if (!previous.existed) {
             await agentDeleteFile(args.path, { epoch: previous.epoch });
-            stack.pop();
+            stack.pop(); _noteSyntax(args.path, null);   // syntax_watch: the error of the edit that was undone is gone with it
             return { success: true, path: args.path, note: 'File deleted (it did not exist before the write).' };
         }
         await agentWriteFile(args.path, previous.content, null, { epoch: previous.epoch });
-        stack.pop();
+        stack.pop(); if (runtime.experiment('syntax_watch')) _noteSyntax(args.path, await _syntaxCheck(args.path).catch(() => null));
         return { success: true, path: args.path, bytes: _byteLen(previous.content), note: 'Restored previous content.' };
     } catch (e) { return { error: `undo_write: ${e.message}` }; }
 }
@@ -956,6 +969,7 @@ async function _handleDeleteFile(args: any, context: any) {
         if (!workspaceUsesAbsolutePaths?.() && !(await agentListFiles()).some((f: any) => (f?.name ?? f) === args.path))
             return { error: `delete_file: ${args.path} not found` };
         await agentDeleteFile(args.path);
+        _noteSyntax(args.path, null);
         return { success: true };
     }
     catch (e) { return { error: e.message }; }
@@ -1933,6 +1947,8 @@ async function _assistParseGuard(path: string, original: string, updated: string
     const from = Math.max(1, at.s - 2);
     return { error: `replace_in_file: this edit would leave "${path}" unparseable, so nothing was changed.${tailHint}\n${broke}\nThe lines would have read:\n${_numbered(would.slice(from - 1, Math.min(would.length, at.tail + 3)), from)}\nThe lines now:\n${_numbered(now.slice(from - 1, Math.min(now.length, from + 2 + (at.tail - at.s + 1) + 2)), from)}` };
 }
+// "No need to re-read" is left out when the note says the edit may have hit another copy of old_string.
+const _noReread = (note: string): string => /\boccurs (?:\d+|more than 5) times\b/.test(note) ? '' : ' No need to re-read the file to verify.';
 // Lines s–e replaced with `out` (dropping a repeat of the line just above or below), parse-guarded, written.
 // `retryOut` is the same edit made from new_string with one level of escaping removed (null: none).
 async function _assistReplaceLines(args: any, original: string, lines: string[], s: number, e: number, out: string[], retryOut: string[] | null, note: string, write: (c: string) => Promise<void>) {
@@ -1946,7 +1962,7 @@ async function _assistReplaceLines(args: any, original: string, lines: string[],
     await write(g.updated);
     const n = g.updated.split('\n').length - (lines.length - (e - s + 1));
     return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated),
-        note: `${note}Change applied at lines ${s}–${s + Math.max(n, 1) - 1}.${dup.note}${g.note} No need to re-read the file to verify.` };
+        note: `${note}Change applied at lines ${s}–${s + Math.max(n, 1) - 1}.${dup.note}${g.note}${_noReread(note)}` };
 }
 
 // A task file's status moves through update_task_status, which runs the gates; a tool that edits the file must not move it (write_file and
@@ -2035,7 +2051,7 @@ async function _handleReplaceInFile(args, context) {
         let dupNote = '';
         if (idx !== -1) {
             const at: number[] = [];
-            for (let i = idx; i !== -1 && at.length < 6; i = searchText.indexOf(args.old_string, i + matchLen)) at.push(i);
+            for (let i = idx; i !== -1 && at.length < 6; i = searchText.indexOf(args.old_string, i + 1)) at.push(i);   // one on: overlapping copies (`a,a` in `a,a,a`) count
             const ln = (i: number) => original.slice(0, searchOffset + i).split('\n').length;
             // Experiment edit_unique: refuse instead, as the other match paths do (CCR-03; measure on SWE Lite/Verified before turning it on).
             if (at.length > 1 && runtime.experiment('edit_unique'))
@@ -2179,7 +2195,7 @@ async function _handleReplaceInFile(args, context) {
             const g = await _assistParseGuard(String(args.path), original, upd, () => original.slice(0, absIdx) + unescapeOnce(newText) + original.slice(end), { s, tail: s + newText.split('\n').length - 1 });
             if ('error' in g) return g;
             await write(g.updated);
-            return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated), note: `${pre}Change applied at line ${s}. No need to re-read the file to verify.${decodedNote}${g.note}` };
+            return { success: true, path: args.path, replacements_made: 1, bytes: _byteLen(g.updated), note: `${pre}Change applied at line ${s}.${_noReread(pre)}${decodedNote}${g.note}` };
         }
         const updated = original.slice(0, absIdx) + newText + original.slice(absIdx + matchLen);
         await write(updated);

@@ -166,6 +166,10 @@ describe('gitArgsRefusal', () => {
         expect(gitArgsRefusal(['log', '--', '--output=x'])).toBeNull();
         expect(gitArgsRefusal(['diff', '--textconv', '--', 'a'])).not.toBeNull();
         expect(gitArgsRefusal(['clone', '--', '--upload-pack=sh', 'r'])).not.toBeNull();
+        // grep and blame take a `--` as the value of -e, -S, --contents: the option after it still runs
+        expect(gitArgsRefusal(['grep', '-e', '--', '-Osh'])).not.toBeNull();
+        expect(gitArgsRefusal(['grep', '-e', '--', '--open-files-in-pager=sh'])).not.toBeNull();
+        expect(gitArgsRefusal(['blame', '--contents', '--', '--textconv', 'f'])).not.toBeNull();
     });
 
     it('refuses reading or operating outside the project repository', () => {

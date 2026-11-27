@@ -150,6 +150,20 @@ describe('checkpoint restore of the local folder', () => {
         const { localFiles } = await W.restoreCheckpointWorkspace('chat-1252', '1000');
         expect(localFiles).toContainEqual({ name: 'data.bin', content: Buffer.from(raw).toString('base64'), encoding: 'base64' });
     });
+    it('a text file that does not re-encode to itself shows as text in the diff, is not a change when untouched, and still restores its exact bytes', async () => {
+        const dir = await connect();
+        const raw = new Uint8Array([0xef, 0xbb, 0xbf, 0x41, 0x0a]);   // UTF-8 with a BOM: decoded text is "A\n", re-encoded it loses the BOM
+        dir.disk.set('bom.cs', raw);
+        await W.saveCheckpointSnapshot('chat-bom', '1000');
+        await W.saveCheckpointSnapshot('chat-bom', '2000');
+        expect((await W.getCheckpointDiff('chat-bom', '2000')).localDelta).toEqual([]);
+        expect((await W.getCheckpointDiff('chat-bom', '1000')).localDelta[0]).toMatchObject({ name: 'bom.cs', content: 'A\n', op: 'add' });
+        expect((await W.getCheckpointDiff('chat-bom', '1000')).localDelta[0].encoding).toBeUndefined();
+        dir.disk.set('bom.cs', new TextEncoder().encode('changed'));
+        await W.saveCheckpointSnapshot('chat-bom', '3000');
+        const { localFiles } = await W.restoreCheckpointWorkspace('chat-bom', '1000');
+        expect(localFiles).toContainEqual({ name: 'bom.cs', content: Buffer.from(raw).toString('base64'), encoding: 'base64' });
+    });
     it('a file made in the folder after the snapshot is returned as a delete', async () => {
         const dir = await connect({ 'keep.txt': 'K' });
         await W.saveCheckpointSnapshot('chat-del', '1000');

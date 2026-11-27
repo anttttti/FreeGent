@@ -64,25 +64,28 @@ export function offerGuestQuota(retry: () => void, usable?: () => boolean): void
 </div>`;
     const status = overlay.querySelector('[data-role="status"]') as HTMLElement;
     const guestBtn = overlay.querySelector('[data-act="guest"]') as HTMLButtonElement;
-    overlay.querySelector('[data-act="close"]')!.addEventListener('click', () => overlay.remove());
-    overlay.querySelector('[data-act="key"]')!.addEventListener('click', () => { overlay.remove(); (window as any).showSettings?.('credentials'); });
+    // The level the visitor had before "Use the guest quota" moved them to Routed: put back on every path that ends without a guest send.
+    let prior: string | null = null, sent = false;
+    const setLevel = (level: string) => (window as any).onPrivacyLevelChange?.(level);
+    const undo = () => { if (prior !== null && !sent) { setLevel(prior); prior = null; } };
+    overlay.querySelector('[data-act="close"]')!.addEventListener('click', () => { overlay.remove(); undo(); });
+    overlay.querySelector('[data-act="key"]')!.addEventListener('click', () => { overlay.remove(); undo(); (window as any).showSettings?.('credentials'); });
     guestBtn.addEventListener('click', async () => {
         if (guestQuotaPausedUntil()) { status.textContent = _pausedText(); return; }
         guestBtn.disabled = true;
         status.textContent = 'Checking the guest quota…';
         const before = getPrivacyLevel();
-        const setLevel = (level: string) => (window as any).onPrivacyLevelChange?.(level);
-        if (before !== 'routed') setLevel('routed');
+        if (before !== 'routed' && prior === null) { prior = before; setLevel('routed'); }
         try { await loadCfWorkerKeys(); } catch {}
         // Closed while the lookup ran: the visitor withdrew the offer, so the send does not go ahead.
-        if (!overlay.isConnected) { if (before !== 'routed' && !guestQuotaOn()) setLevel(before); return; }
+        if (!overlay.isConnected) { undo(); return; }
         if (guestQuotaOn() && usable && !usable()) {
             status.textContent = 'Guest access is on, but none of the models in your priority list runs on it. Add a Groq, Kilo, OpenRouter or TokenHarbor model in Settings → Models, or add your own key.';
             guestBtn.disabled = false;
             return;
         }
-        if (guestQuotaOn()) { overlay.remove(); retry(); return; }
-        if (before !== 'routed') setLevel(before);
+        if (guestQuotaOn()) { sent = true; overlay.remove(); retry(); return; }
+        undo();
         status.textContent = 'The guest quota is off right now. Add your own key, or try again later.';
         guestBtn.disabled = false;
     });

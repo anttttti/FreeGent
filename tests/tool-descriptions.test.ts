@@ -231,4 +231,14 @@ describe('run_workers', () => {
         expect(await W.agentReadFile('u.txt')).toBe('v2');
         expect((await tool('read_file', { path: 'u.txt' }, a)).content).toBe('v2');
     });
+
+    it('a worker\'s undo_write also puts back an edit its execute_code already wrote into the workspace', async () => {
+        await W.agentWriteFile('d.txt', 'v1');
+        const a = { snapshot: new LazySnapshot(await W.agentListFiles()), staging: new Map(), depth: 0 };
+        await tool('write_file', { path: 'd.txt', content: 'worker' }, a);
+        await tool('execute_code', { language: 'bash', code: 'cat d.txt' }, a);
+        expect(await W.agentReadFile('d.txt')).toBe('worker');
+        expect(await tool('undo_write', { path: 'd.txt' }, a)).toMatchObject({ success: true });
+        expect(await W.agentReadFile('d.txt')).toBe('v1');
+    });
 });

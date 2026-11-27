@@ -222,8 +222,9 @@ function _matchNeedle(needle, result) {
     if (n.includes('&&')) return n.split('&&').every(part => _matchNeedle(part.trim(), result));
     // `field==` (nothing after it) never parsed as a comparison, so the built-in debug skill's `stdout==` never fired. Experiment
     // empty_compare reads it as "empty"; it adds that skill's guidance after a failed command, so it is measured before it is on.
-    const cmp = n.match(runtime.experiment('empty_compare') ? /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.*)$/ : /^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
-    if (cmp) {
+    // Only `==` takes an empty operand: a literal needle such as `div>` (from `read_file=>div>`) stays a literal.
+    const cmp = n.match(/^(\w+)\s*(==|!=|>=|<=|>|<)\s*(.*)$/);
+    if (cmp && (cmp[3] !== '' || (cmp[2] === '==' && runtime.experiment('empty_compare')))) {
         const [, field, op] = cmp;
         const quoted = /^(['"])(.*)\1$/.test(cmp[3].trim());   // a quoted operand is a string: "01" is not 1
         const rawVal = cmp[3].trim().replace(/^(['"])(.*)\1$/, '$2');   // `status=="failed"` and `stdout==""` as written in YAML (antigravity AG-07)

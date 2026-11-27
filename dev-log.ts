@@ -2,7 +2,7 @@
 // is saved (Settings → Credentials). Two streams, joined by SESSION_ID:
 //   • console errors / warnings / uncaught errors → POST /errlog (batched, key required)
 //   • a finished or failed Task's chat log        → POST /log     (sendTaskLog, called by runner.ts)
-import { DEFAULT_CF_WORKER, getDevKey } from './proxy.js';
+import { DEFAULT_CF_WORKER, getDevKey, isDefaultWorkerUrl } from './proxy.js';
 import { getPrivacyLevel } from './privacy.js';
 import { redactText } from './secrets.js';
 import { storedCredentialValues } from './stored-credentials.js';
@@ -43,7 +43,10 @@ function _deviceInfo() {
 
 /** A self-hosted Worker is configured (Settings → Privacy): the saved Developer key is that Worker's, not FreeGent's, so nothing is uploaded to proxy.freegent.ai with it. */
 function _ownWorker(): boolean {
-    try { return !!(localStorage.getItem('fg_search_proxy') || '').trim(); } catch { return false; }
+    try {
+        const v = (localStorage.getItem('fg_search_proxy') || '').trim();
+        return !!v && !isDefaultWorkerUrl(/^https?:\/\//i.test(v) ? v : `https://${v}`);   // FreeGent's own Worker entered by hand is still FreeGent's
+    } catch { return false; }
 }
 
 function devLoggingOn(): boolean { return !!getDevKey() && getPrivacyLevel() === 'routed' && !_ownWorker(); }

@@ -596,7 +596,7 @@ export default {
                     rateChecked = true;
                     const limit = _guestDaily(env);
                     const used = await _guestCount(request, env);
-                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials');
+                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials', { 'Retry-After': '15' });   // the client reads a bare 503 as a provider's quota and cools the model for an hour or a week; 15 s is what it waits now
                     if (used > limit)
                         return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
                     guest = true;
@@ -757,9 +757,9 @@ function _safeSyncPath(p) {
   return p.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..');
 }
 
-function _err(status, message) {
+function _err(status, message, extra = {}) {
     return new Response(JSON.stringify({ error: message }), {
         status,
-        headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1' },
+        headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', ...extra },
     });
 }

@@ -345,8 +345,9 @@ export async function disableKeyVault(): Promise<void> {
         const { blob } = _readVault();
         if (!blob || lg !== _lockGen || _cryptoKey !== key) throw new Error('The key lock changed meanwhile. Try again.');
         const values = await _decrypt(key, blob);  // the latest saved values, other tabs' writes included
-        // A Lock now or reset during the decrypt must not be undone by writing the keys back as plain text.
-        if (lg !== _lockGen || _cryptoKey !== key || _readVault().blob?.salt !== blob.salt) throw new Error('The key lock changed meanwhile. Try again.');
+        // A Lock now or reset during the decrypt must not be undone by writing the keys back as plain text; nor may a save that landed meanwhile
+        // (it keeps the salt, changes the ciphertext; with no Web Locks nothing else holds it back) be written back as the older value.
+        if (lg !== _lockGen || _cryptoKey !== key || _readVault().blob?.ct !== blob.ct) throw new Error('The key lock changed meanwhile. Try again.');
         for (const [k, p] of _pending) { if (p.value === null) values.delete(k); else values.set(k, p.value); }   // and ours still in flight
         // Storage that fills up half way must leave the encrypted copy and no half-restored plain keys: the lock stays on.
         const restored: string[] = [];

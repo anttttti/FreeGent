@@ -27,6 +27,13 @@ describe('dev-log', () => {
         expect(f).not.toHaveBeenCalled();
     });
 
+    it.each(['https://proxy.freegent.ai', 'proxy.freegent.ai/', 'https://proxy.freegent.ai/x'])('FreeGent\'s own Worker entered by hand (%s) still gets the logs', async v => {
+        localStorage.setItem('fg_dev_key', 'k1');
+        localStorage.setItem('fg_search_proxy', v);
+        devLogEntry('error', 'console', 'boom');
+        expect(_devLogQueueForTest()).toHaveLength(1);
+    });
+
     it('batches entries with the session id and the key, and counts repeats', async () => {
         localStorage.setItem('fg_dev_key', 'k1');
         devLogEntry('warn', 'console', 'same'); devLogEntry('warn', 'console', 'same'); devLogEntry('error', 'console', 'other');

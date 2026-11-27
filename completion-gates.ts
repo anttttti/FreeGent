@@ -30,6 +30,7 @@ export interface GateContext {
     changeRequired: boolean;          // taskPolicy.changeRequired(): graded on the system's state afterwards; benchmark runs only
     gradedTestIds: () => string[];    // taskPolicy.gradedTestIds(task): benchmark runs only
     isScratchPath: (p: string) => boolean;
+    hasTool?: (tool: string) => boolean;   // whether the agent is offered this tool (tools.ts _callerHasTool); absent: all are
     brokenFiles: (paths: Iterable<string>) => Promise<string[]>;   // parse errors of these files (tools.ts brokenFileReport)
     shellCommands?: string[];         // the bash commands that ran successfully this turn, in order
     taskIds?: () => Promise<Set<string> | null>;   // ids (as numbers) of the task files on the board: what the reply may name; null: this run has no board
@@ -59,7 +60,7 @@ const brokenSyntax: CompletionGate = {
         return { name: 'broken_syntax', force: true,
             text: `You declared COMPLETED, but ${one ? 'a file' : `${broken.length} files`} you changed in this run no longer parse${one ? 's' : ''}:\n${broken.slice(0, 3).join('\n')}${broken.length > 3 ? `\n(and ${broken.length - 3} more)` : ''}\n` +
                 `${one ? 'It was' : 'They were'} changed in this run, so do not call the error pre-existing until you have checked that your change did not cause it: anything that loads ${one ? 'this file' : 'these files'} (the page, an import, a test) fails. ` +
-                `Fix it, or call undo_write on the path to restore the previous version, check that it parses, then reply COMPLETED.` };
+                `Fix it${c.hasTool && !c.hasTool('undo_write') ? ',' : ', or call undo_write on the path to restore the previous version,'} check that it parses, then reply COMPLETED.` };
     },
 };
 

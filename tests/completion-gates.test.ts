@@ -85,6 +85,11 @@ describe('broken_syntax', () => {
         expect(asked).toEqual(['src/render.js']);   // scratch files are not checked
         expect(await runCompletionGates(c)).toBeNull();
     });
+    it('names undo_write only when the agent is offered it', async () => {
+        const run = (hasTool: (t: string) => boolean) => runCompletionGates(ctx({ editsThisRun: true, editedPaths: new Set(['src/a.js']), brokenFiles: async () => [report], hasTool }));
+        expect((await run(() => true))?.text).toMatch(/call undo_write/);
+        expect((await run(t => t !== 'undo_write'))?.text).toMatch(/Fix it, check that it parses/);
+    });
     it('says nothing when the changed files parse, or nothing was changed', async () => {
         expect(await runCompletionGates(ctx({ editsThisRun: true, editedPaths: new Set(['src/a.js']) }))).toBeNull();
         let called = false;

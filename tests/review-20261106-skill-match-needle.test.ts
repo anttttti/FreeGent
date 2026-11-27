@@ -74,6 +74,9 @@ describe('review: reactiveSkillGuidance and _matchNeedle edge cases', () => {
             W._reactiveFired.clear();
             process.env.FG_EXPERIMENTS = 'empty_compare';
             expect(call()).toContain('test-empty-compare');
+            // a literal needle ending in `>` is not an empty comparison
+            W.skillsRegistry.set('test-div', { name: 'test-div', trigger_on_tool: 'read_file=>div>', body: 'closing tag' });
+            expect(W.reactiveSkillGuidance([{ name: 'read_file', args: { path: 'a.html' }, result: { content: '</div>' } }])).toContain('test-div');
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 

@@ -30,6 +30,13 @@ describe('edit_unique (experiment)', () => {
         expect(r.error).toMatch(/occurs 2 times in "u\.py" \(lines 2, 5\), so nothing was changed/);
         expect(files.get('u.py')).toBe('def g():\n    return 0\n\ndef h():\n    return 0\n');
     });
+    it('counts overlapping copies', async () => {
+        process.env.FG_EXPERIMENTS = 'edit_unique';
+        files.set('o.txt', 'a,a,a');
+        const r = await run('replace_in_file', { path: 'o.txt', old_string: 'a,a', new_string: 'x' });
+        expect(r.error).toMatch(/occurs 2 times/);
+        expect(files.get('o.txt')).toBe('a,a,a');
+    });
 });
 
 describe('edit_assist', () => {
@@ -37,6 +44,7 @@ describe('edit_assist', () => {
         files.set('b.py', 'def g():\n    return 0\n\ndef h():\n    return 0\n');
         const r = await run('replace_in_file', { path: 'b.py', old_string: '    return 0\n', new_string: '    return 1\n' });
         expect(r.note).toMatch(/^old_string occurs 2 times; the first, at line 2, was changed \(also at line 5\)/);
+        expect(r.note).not.toMatch(/No need to re-read/);
         expect(files.get('b.py')).toBe('def g():\n    return 1\n\ndef h():\n    return 0\n');
     });
     it('makes a misremembered edit where the model read the text, keeping the file\'s own lines it did not change', async () => {

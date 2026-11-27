@@ -36,8 +36,8 @@ class PersistentCooldownMap extends Map<string, number> {
             if ((globalThis as any).window?._fgHeadless) return;
             const saved = JSON.parse(localStorage.getItem(COOLDOWN_STORE_KEY) || '{}');
             const now = Date.now();
-            // An expiry more than 3 days out is not a cooldown any limit sets (an older parser stored years for a bad reset header): it is dropped.
-            for (const [k, until] of Object.entries(saved)) if (typeof until === 'number' && until > now && until < now + 3 * 86_400_000) super.set(k, until);
+            // An expiry more than 40 days out (the longest quota reset parseQuotaResetMs accepts) is not a cooldown any limit sets (an older parser stored years for a bad reset header): it is dropped; a TokenHarbor weekly cooldown is kept.
+            for (const [k, until] of Object.entries(saved)) if (typeof until === 'number' && until > now && until < now + 40 * 86_400_000) super.set(k, until);
         } catch { /* no storage, or unreadable: start empty */ }
     }
     private _save(): void {
@@ -307,6 +307,12 @@ export function _markCooldown(endpoint: any, exactMs: number | null = null, err:
     // A per-account quota error: the model and its free siblings wait until the reset the message names
     // (a Retry-After header can be much shorter than that), else the catalog's cooldown, else an hour.
     const _msg = String(err?.message ?? '');
+    // The Worker's own guest counter is down (cf-worker.js answers 503 with Retry-After 15): that is no provider's quota, so the model waits seconds, not
+    // the catalog's week or the hour of a first refusal.
+    if (/guest quota counter is unavailable/i.test(_msg)) {
+        if ((_endpointCooldown.get(key) ?? 0) < Date.now() + 15_000) _endpointCooldown.set(key, Date.now() + 15_000);
+        return;
+    }
     // MoonMath's Free plan runs two requests at once per key (x-ratelimit-api_key-limit-max_parallel_requests: 2) and refuses a third
     // with 429 + Retry-After: 60, although a slot frees as soon as one finishes (checked 2026-11-01). Retry this model shortly; no quota is spent.
     if (endpoint.provider === 'moonmath' && /HTTP 429\b/.test(_msg) && /requests at once|parallel/i.test(_msg)) {

@@ -4,6 +4,7 @@
 // codes. All through executeToolAsync, on both backends (tests/tool-backends.ts): the browser
 // and headless.
 import { BACKENDS } from './tool-backends';
+import { openSyntaxErrors } from '../tools.ts';
 
 const W = globalThis as any;
 const tool = (name: string, args: any) => W.executeToolAsync(name, args);
@@ -303,7 +304,7 @@ describe('delete_file and undo_write', () => {
         expect(await stored('u.txt')).toBe('v1');
     });
 
-    // A patch or append that breaks the file gets _SYNTAX_HINT ("call undo_write on this path"): that undo must work.
+    // A patch that breaks the file gets _SYNTAX_HINT ("call undo_write on this path"): that undo must work, and an append is undone the same way.
     it('undo_write reverts apply_patch and append_file too', async () => {
         await tool('write_file', { path: 'p.js', content: 'const a = 1;\n' });
         const r = await tool('apply_patch', { path: 'p.js', patch: '@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = ;\n' });
@@ -313,6 +314,21 @@ describe('delete_file and undo_write', () => {
         await tool('append_file', { path: 'n.txt', content: 'x' });
         expect(await tool('undo_write', { path: 'n.txt' })).toMatchObject({ success: true });
         expect(await names()).not.toContain('n.txt');
+    });
+
+    // Experiment syntax_watch: the tracker of broken files must not keep the error of an edit that was taken back, or of a file that is gone.
+    it('syntax_watch forgets the error of an undone edit and of a deleted file', async () => {
+        const prev = process.env.FG_EXPERIMENTS; process.env.FG_EXPERIMENTS = 'syntax_watch';
+        try {
+            await tool('write_file', { path: 'u.json', content: '{"a": 1}' });
+            expect((await tool('write_file', { path: 'u.json', content: '{"a": ' })).syntax_error).toBeTruthy();
+            expect(openSyntaxErrors().map(([p]) => p)).toEqual(['u.json']);
+            expect(await tool('undo_write', { path: 'u.json' })).toMatchObject({ success: true });
+            expect(openSyntaxErrors()).toEqual([]);
+            expect((await tool('write_file', { path: 'v.json', content: '{"a": ' })).syntax_error).toBeTruthy();
+            await tool('delete_file', { path: 'v.json' });
+            expect(openSyntaxErrors()).toEqual([]);
+        } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 
     // codex report 8, cases 425-434

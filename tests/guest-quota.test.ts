@@ -56,6 +56,7 @@ describe('guest quota offer', () => {
         document.getElementById('fg-guest-quota-dialog')!.remove();   // closed during the /keys lookup
         await flush();
         expect(retry).not.toHaveBeenCalled();
+        expect(state.level).toBe('provider');   // the move to Routed goes with the withdrawn offer, also when guest access is on
     });
 
     it('with the quota on but no model of the list covered by it, says so and does not send (no reopening loop)', async () => {
@@ -66,6 +67,8 @@ describe('guest quota offer', () => {
         expect(retry).not.toHaveBeenCalled();
         expect(document.getElementById('fg-guest-quota-dialog')).not.toBeNull();
         expect(statusText()).toMatch(/none of the models in your priority list/);
+        click('close');
+        expect(state.level).toBe('provider');   // no guest send happened: the visitor is not left at Routed
     });
 
     it('when the quota is off, says so, restores the privacy level and does not send', async () => {
