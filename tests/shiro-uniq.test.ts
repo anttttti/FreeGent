@@ -21,6 +21,11 @@ describe('uniq', () => {
         expect((await run("printf 'a x  y\\nb x y\\n' | uniq -f1")).out).toBe('a x  y\nb x y\n');
         expect((await run("printf '  a x\\nb x\\n' | uniq -f1")).out).toBe('  a x\n');
     });
+    it('reads a file operand as text like stdin does, a leading BOM included', async () => {
+        files.set('bom.txt', { content: '\uFEFFa\na\nb\n', encoding: null });
+        expect((await run('uniq bom.txt')).out).toBe((await run('cat bom.txt | uniq')).out);
+        expect((await run('uniq bom.txt')).out).toBe('\uFEFFa\na\nb\n');   // the BOM is part of the first line, as for GNU uniq
+    });
     it('reads "-" as stdin and writes the second operand (EV017)', async () => {
         expect((await run("printf 'a\\na\\nb\\n' | uniq -")).out).toBe('a\nb\n');
         files.set('in.txt', { content: 'a\na\nb\n', encoding: null });

@@ -10223,7 +10223,7 @@
     "shiro/commands/umask.ts": "e36522e4d861feedafd6207d38b313496850e8ee65af5fd2d46fe26e195942c4",
     "shiro/commands/unalias.ts": "02f5d75758b8502224729a8d638a38dfee18eebbca66a8c93389a0e70140323e",
     "shiro/commands/unexpand.ts": "fb6bac4ab944342b50d06d88ad0bacdad79a54708dcb70abdcfa2a01386365e7",
-    "shiro/commands/uniq.ts": "fd39feb31698924bb5063ac87498d7d773e9a1f54518088d4b6f8f46d468164c",
+    "shiro/commands/uniq.ts": "9d32ce39ad91be459933410c59eaeb94dd4ef42ad1d83384f46106f2342a6cb8",
     "shiro/commands/unix.ts": "60aed74d0ad5523f2e52e585b4a0f2df07302ef070d39b013df9505bdde60f39",
     "shiro/commands/uptime.ts": "38ee297e4570a5873cd86297d44d060e90d3c60989492a87ba9193287651b61e",
     "shiro/commands/watch.ts": "607dba315ac32d47163d3a7333ee543bc3b73aae358eaf43b9cec56cc925c46b",

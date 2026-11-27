@@ -627,8 +627,8 @@ const _GIT_SUB_EXEC: Record<string, RegExp> = {
     archive:     /^(--exec|--remote)(=|$)/,
     push:        /^(--receive-pack|--exec)(=|$)/,
     grep:        /^(-O|--open-files-in-pager)|^-[A-Za-z]*f|^--file(=|$)/,   // -f reads the patterns from a file outside the repository (an oracle for its lines)
-    blame:       /^--(contents|ignore-revs-file)(=|$)|^-S/,   // --contents prints any file's lines as the blamed text; the revs file's first line shows in the error
-    annotate:    /^--(contents|ignore-revs-file)(=|$)|^-S/,
+    blame:       /^--(contents|ignore-revs-file)(=|$)|^-[A-Za-z]*S/,   // --contents prints any file's lines as the blamed text; the revs file's first line shows in the error
+    annotate:    /^--(contents|ignore-revs-file)(=|$)|^-[A-Za-z]*S/,
     rebase:      /^(-x|--exec)(=|$)/,
 };
 //   Anywhere: writing output to a path, reading paths outside the repository, or turning back on the programs hardenGitArgs turns off (an

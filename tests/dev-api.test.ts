@@ -169,7 +169,7 @@ describe('gitArgsRefusal', () => {
         // grep and blame take a `--` as the value of -e, -S, --contents: the option after it still runs
         // files outside the repository: blame and annotate print --contents as the blamed text, grep -f reads patterns from a file
         for (const a of [['blame', '--contents', '/etc/passwd', 'f'], ['annotate', '--contents=/etc/passwd', 'f'], ['blame', '--cont', '/etc/passwd', 'f'],
-            ['blame', '--ignore-revs-file', '/etc/hostname', 'f'], ['blame', '-S', '/etc/hostname', 'f'], ['grep', '-f', '/etc/passwd'], ['grep', '-nf', '/etc/passwd'], ['grep', '--file=/etc/passwd']])
+            ['blame', '--ignore-revs-file', '/etc/hostname', 'f'], ['blame', '-S', '/etc/hostname', 'f'], ['blame', '-nS', '/etc/hostname', 'f'], ['annotate', '-wS', '/etc/hostname', 'f'], ['grep', '-f', '/etc/passwd'], ['grep', '-nf', '/etc/passwd'], ['grep', '--file=/etc/passwd']])
             expect(gitArgsRefusal(a), JSON.stringify(a)).not.toBeNull();
         for (const a of [['blame', '-L1,2', '--', 'f'], ['annotate', '-w', 'f'], ['grep', '-n', 'x'], ['grep', '--files-with-matches', 'x'], ['log', '-S', 'x']])
             expect(gitArgsRefusal(a), JSON.stringify(a)).toBeNull();

@@ -1343,8 +1343,9 @@ function InputLine({ ready, running, promptSuggestion }: {
         accept();
 
         // A message while a /goal runs steers it: it goes into the next turn's prompt, not into the queue.
-        if (goalRunning() && steerGoal(t)) {
-            Store.addNotice(`_Added to the goal's next turn: ${t.length > 120 ? t.slice(0, 120) + '…' : t}_`);
+        if (goalRunning()) {
+            if (steerGoal(t)) Store.addNotice(`_Added to the goal's next turn: ${t.length > 120 ? t.slice(0, 120) + '…' : t}_`);
+            else { unsentRef.current = t; Store.addNotice(`_The goal is finishing, so the note was not added. Your message is saved: ${t.length > 80 ? t.slice(0, 80) + '…' : t}_`); }   // queued, it would wait for a drain that never comes
             return;
         }
 

@@ -1052,6 +1052,7 @@ function _renderQueuePanel(): void {
     });
 }
 
+let _leasePing = false;   // a dequeue is waiting for another tab's lease holder to answer
 /** Dequeue and send the next pending message, or interrupt if steering. */
 async function _processQueue(): Promise<void> {
     if (agentStreaming) {
@@ -1062,14 +1063,17 @@ async function _processQueue(): Promise<void> {
     if (preparing()) return;
     if ((window as any).__fgTabOutdated) return;   // as in agentSend: the turn could not be saved; the message stays in the queue panel
     // A background job (Autopilot, /goal, init) owns the chat between its turns: a queued message is not its turn. It waits; the job processes the queue when it lets go (codex R112).
-    if (aiJob) return;
+    if (aiJob || _leasePing) return;
     const head = MsgQueue.peek();
     if (!head) return;
     // A message belongs to the chat it was written in; with another chat open it stays parked instead of becoming a request there (codex R114).
     if (!_queuedHere(head)) return;
     // The same cross-tab rule as a direct Send: a turn in a chat another tab is running would overwrite its history. The message stays queued and is tried again (codex R113).
     const leaseChat = activeChatId as string | null;
-    if (!acquireChatLease(leaseChat) && (await chatLeaseHolderAlive(leaseChat) || !acquireChatLease(leaseChat))) { setTimeout(() => _processQueue(), 3000); return; }
+    // Only one attempt waits on the ping: a second one would resume with the head already taken and release the lease of the turn the first started.
+    let leased = acquireChatLease(leaseChat);
+    if (!leased) { _leasePing = true; try { leased = !(await chatLeaseHolderAlive(leaseChat)) && acquireChatLease(leaseChat); } finally { _leasePing = false; } }
+    if (!leased) { setTimeout(() => _processQueue(), 3000); return; }
     // The ping above waits: the chat may have changed or the head been cancelled meanwhile. The lease is of the chat the head was read for.
     if (activeChatId !== leaseChat || MsgQueue.peek() !== head) { releaseChatLease(leaseChat); setTimeout(() => _processQueue(), 0); return; }
     const msg = MsgQueue.shift();

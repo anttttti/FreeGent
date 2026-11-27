@@ -68,10 +68,10 @@ MoonMath's DeepSeek V4.1 Flash passed an image-reading check (a random six-digit
 ## Requesty
 
 Requesty uses `https://router.requesty.ai/v1/chat/completions` with `provider/model` IDs. Set `REQUESTY_API_KEY` in the
-credentials file, or paste the key (`rqsty-...`) in Settings. CLI example: `freegent --provider requesty --model novita/ling-3.1-flash`.
+credentials file, or paste the key (`rqsty-...`) in Settings. CLI example: `freegent --provider requesty --model nvidia/nemotron-3.5-lightning-30b-a3b`.
 Its public `GET /v1/models` lists over 800 models with per-token prices. On 2026-11-01, 13 of them cost $0 for input and output.
 Those work on an organization with a $0 balance; priced ones answer `402` "Your organization's balance is too low to run this request".
-Streamed tool calls were checked on the free routes the catalog includes: Ling 3.1 Flash (Novita), Nemotron 3 Ultra, Nemotron 3.5
+Streamed tool calls were checked on the free routes the catalog includes: Nemotron 3 Ultra, Nemotron 3.5
 Lightning, Muse Glimmer 30B, Nemotron 3 Nano Omni and Gemma 4 31B. Muse Glimmer and Nano Omni read
 an image with a random code. Gemma 4 is listed with vision but answered `400` to images, so it is text-only. Three $0 routes are listed
 but gone upstream (Ling 3.0 Tiny and Nemotron 3 Super: `404`; Nemotron 3 Nano 30B: `410`) and are blacklisted. Two Laguna routes have no

@@ -1,6 +1,6 @@
 
 import type { Command } from './index';
-import { parseArgs, readOperandBytes } from './flags';
+import { parseArgs, readInput } from './flags';
 export const uniq: Command = {
   name: "uniq",
   description: "Report or omit repeated lines",
@@ -16,8 +16,9 @@ export const uniq: Command = {
     try {
       // uniq [INPUT [OUTPUT]]: no operand or "-" is stdin; the second operand is the file the result is written to.
       if (positional.length > 2) throw new Error(`extra operand '${positional[2]}'`);
+      // The same text read as for stdin-less commands (a BOM or Latin-1 byte is kept), not a decode of the bytes.
       const content = positional.length && positional[0] !== "-"
-        ? new TextDecoder().decode(await readOperandBytes(ctx, positional[0]))
+        ? (await readInput([positional[0]], ctx.stdin, ctx.fs, ctx.cwd, ctx.fs.resolvePath)).content
         : ctx.stdin;
       const lines = content.split("\n");
       // Remove trailing empty from final newline
