@@ -32,7 +32,7 @@ describe('plain text editor fallback', () => {
     });
 });
 
-describe('Edit button on a page preview', () => {
+describe('page preview', () => {
     let files: Record<string, string>;
     beforeAll(async () => {
         W.matchMedia ??= () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -46,16 +46,11 @@ describe('Edit button on a page preview', () => {
     });
     afterEach(() => { W.closeAllFileTabs?.(); vi.restoreAllMocks(); });
 
-    it('shows for a workspace file and opens that file\'s editor tab; a page that is not a file gets none', async () => {
+    it('a page preview has no Edit button, whether or not the page is a workspace file', async () => {
         await W.openArtifactTab('app/index.html', '<p>hi</p>');
         await W.openArtifactTab('chat page', '<p>x</p>');
         await new Promise(r => setTimeout(r, 20));
-        const btns = [...document.querySelectorAll<HTMLButtonElement>('.artifact-edit-btn')];
-        expect(btns).toHaveLength(2);
-        expect(btns[0].style.display).toBe('');
-        expect(btns[1].style.display).toBe('none');
-        btns[0].click();
-        await vi.waitFor(() => expect(document.querySelector('.file-panel .file-save-btn')).not.toBeNull());
+        expect([...document.querySelectorAll('.artifact-panel button')].map(b => b.textContent)).toEqual([]);
     });
 });
 

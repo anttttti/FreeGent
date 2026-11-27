@@ -1368,16 +1368,6 @@ async function openArtifactTab(title, html, { isPreview = true, generated = fals
     iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals');
     iframe.srcdoc = content;
     panel.appendChild(iframe);
-    // A preview hides the rail and the menu button, and the file's own editor tab is a small tab in a strip: a button on the page itself
-    // brings the editor back, on a phone above all. Only for a title that is a workspace file (a page the chat made has none).
-    const editBtn = document.createElement('button');
-    editBtn.className = 'artifact-edit-btn';
-    editBtn.textContent = '✎ Edit';
-    editBtn.title = `Edit ${title}`;
-    editBtn.style.display = 'none';
-    editBtn.onclick = () => openFileTab(title);
-    panel.appendChild(editBtn);
-    if (!generated) Promise.resolve(agentReadFile(title)).then(() => { editBtn.style.display = ''; }, () => {});   // a chat snippet called artifact.html is not the project's artifact.html (review of 491d6d5)
     document.getElementById('tab-content').appendChild(panel);
 
     fileTabs.set(key, { tab, panel, editor: null, savedContent: html, isPreview, deps });
