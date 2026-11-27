@@ -631,7 +631,7 @@ describe('hermes C5 and opencode §3.2: the read-only git gate', () => {
     it('finds the subcommand after the global options, so `git --no-pager status` is a read', async () => {
         const { gitReadOnlyRefusal, gitSubcommand } = await import('../dev-api.ts');
         expect(gitSubcommand(['--no-pager', 'log', '-1'])).toMatchObject({ sub: 'log', rest: ['-1'] });
-        for (const a of [['status'], ['--no-pager', 'status'], ['-p', 'status'], ['--no-pager', 'log', '-1'], ['--no-pager', 'stash', 'list'], ['--no-pager', 'remote', '-v'], ['worktree', 'list']])
+        for (const a of [['status'], ['--no-pager', 'status'], ['-p', 'status'], ['--no-pager', 'log', '-1'], ['--no-pager', 'stash', 'list'], ['--no-pager', 'remote', '-v'], ['worktree', 'list'], ['annotate', '--', 'f']])
             expect(gitReadOnlyRefusal(a), a.join(' ')).toBeNull();
     });
     it('branch, tag and reflog only list', async () => {

@@ -727,7 +727,7 @@ function _gitIdentityEnv(cwd: string): Record<string, string> {
 const _GIT_READONLY = new Set([
     'status', 'diff', 'log', 'show', 'branch', 'remote', 'tag',
     'ls-files', 'ls-tree', 'cat-file', 'describe', 'rev-parse', 'rev-list',
-    'blame', 'grep', 'shortlog', 'reflog', 'stash', 'worktree',
+    'blame', 'annotate', 'grep', 'shortlog', 'reflog', 'stash', 'worktree',
 ]);
 const _GIT_READONLY_STASH_OPS    = new Set(['list', 'show']);
 const _GIT_READONLY_WORKTREE_OPS = new Set(['list']);

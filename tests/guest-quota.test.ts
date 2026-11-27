@@ -59,6 +59,15 @@ describe('guest quota offer', () => {
         expect(state.level).toBe('provider');   // the move to Routed goes with the withdrawn offer, also when guest access is on
     });
 
+    it('clicking the backdrop withdraws the offer and puts the privacy level back', async () => {
+        state.guest = true;
+        offerGuestQuota(vi.fn(), () => false);
+        click('guest'); await flush();
+        document.getElementById('fg-guest-quota-dialog')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(document.getElementById('fg-guest-quota-dialog')).toBeNull();
+        expect(state.level).toBe('provider');
+    });
+
     it('with the quota on but no model of the list covered by it, says so and does not send (no reopening loop)', async () => {
         state.guest = true;
         const retry = vi.fn();

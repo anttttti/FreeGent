@@ -40,7 +40,7 @@ export function offerGuestQuota(retry: () => void, usable?: () => boolean): void
     const overlay = document.createElement('div');
     overlay.id = DIALOG_ID;
     overlay.className = 'fg-modal-overlay';
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); undo(); } });
     const terms = TERMS.map(([name, url]) => `<a href="${url}" target="_blank" rel="noopener">${name}</a>`).join(', ');
     overlay.innerHTML = `<div class="fg-modal" role="dialog" aria-modal="true" aria-labelledby="fg-guest-quota-title" style="max-width:520px;width:95%">
   <div class="fg-modal-header">

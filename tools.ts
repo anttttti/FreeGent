@@ -928,7 +928,8 @@ async function _handleUndoWrite(args: any, context: any = null) {
             if (err) return { error: err };
         }
         context.staging.delete(args.path); context.binary?.delete(args.path);
-        _noteSyntax(args.path, null);   // syntax_watch: the file is back as the worker found it
+        // syntax_watch: the file is back as the worker found it, which may itself not parse.
+        if (runtime.experiment('syntax_watch')) { const base = await context.snapshot?.get?.(args.path).catch(() => undefined); _noteSyntax(args.path, typeof base === 'string' ? await _syntaxCheck(args.path, base, { staged: true }).catch(() => null) : null); }
         return { success: true, path: args.path, note: 'Restored the file as it was before this worker changed it.' };
     }
     const stack = _fileCheckpoints.get(args.path);

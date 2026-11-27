@@ -244,6 +244,17 @@ describe('run_workers', () => {
         } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
     });
 
+    it('a worker\'s undo_write keeps the syntax_watch error of an original that did not parse', async () => {
+        const prev = process.env.FG_EXPERIMENTS; process.env.FG_EXPERIMENTS = 'syntax_watch';
+        try {
+            await W.agentWriteFile('o.json', '{"a": ');
+            const a = { snapshot: new LazySnapshot(await W.agentListFiles()), staging: new Map(), depth: 0 };
+            expect((await tool('write_file', { path: 'o.json', content: '{"a": 1}' }, a)).syntax_error).toBeUndefined();
+            expect(await tool('undo_write', { path: 'o.json' }, a)).toMatchObject({ success: true });
+            expect(openSyntaxErrors().map(([p]) => p)).toEqual(['o.json']);
+        } finally { if (prev === undefined) delete process.env.FG_EXPERIMENTS; else process.env.FG_EXPERIMENTS = prev; }
+    });
+
     it('a worker\'s undo_write also puts back an edit its execute_code already wrote into the workspace', async () => {
         await W.agentWriteFile('d.txt', 'v1');
         const a = { snapshot: new LazySnapshot(await W.agentListFiles()), staging: new Map(), depth: 0 };
