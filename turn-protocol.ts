@@ -42,7 +42,7 @@ export function _stripTerminal(text: string): string {
         // _isComplete() recognises this as a valid exit; strip the token and any leading
         // separator so only the result body shows.
         // Requires \s+ or [—–-]\s* so bare "COMPLETED" is left for the end-of-string rules.
-        .replace(/^\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}(?:\s*[—–-]+\s*|\s+)/i, '')
+        .replace(/^\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}(?:\s*[—–-]+\s*|\s+)/, '')
         // Strip leading BLOCKED: prefix — the reason text is kept for display, but the
         // protocol marker is an internal state token, not user-facing copy.
         .replace(/^\s*\*{0,2}BLOCKED\*{0,2}:\s*/m, '')
@@ -82,7 +82,7 @@ export function _isComplete(text: string): boolean {
     if (/\b(?:COMPLETED|DONE|TASK COMPLETE|TERMINATE)[.!]?\s*$/.test(text)) return true;
     // Acknowledgment-prefix pattern: model writes "COMPLETED. [summary]" — COMPLETED at the
     // start of the response followed by a short explanation. Treat the response as complete.
-    if (/^\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}\s+\S/i.test(text)) return true;
+    if (/^\s*\*{0,2}(?:DONE|COMPLETED|TASK COMPLETE|TERMINATE)[.!]?\*{0,2}\s+\S/.test(text)) return true;   // upper case only, like the rules above: "Done reading the config. Next I will …" is narration, not an exit
     return false;
 }
 

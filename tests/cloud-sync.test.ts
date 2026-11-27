@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { sha256Js, sha256Hex, cloudSlug, CloudSyncClient, CloudError, pool, isSafeSyncPath } from '../cloud-sync';
@@ -159,6 +160,28 @@ describe('pool', () => {
 // codex R324: the cloud project is named by the slug of the project name; a second local project whose name reduces to the same slug must
 // not sync into the first one's cloud project (and read its base) without being asked.
 describe('cloud sync dialog', () => {
+    // Keep both writes the cloud version of a conflicting file as "x (cloud).txt": that name must not be one a cloud-only file is written to in the same sync.
+    it('keep both does not take the name of another incoming file', async () => {
+        const W = window as any, { client } = setup(), f = (client as any).doFetch;
+        const saved = { fetch: W.fetch, alert: W.alert };
+        const put = async (t: string) => { const b = bytes(t), h = await sha256Hex(b); await client.putBlob('keepboth', h, b); return { h, s: b.length, m: 1 }; };
+        try {
+            W.fetch = f; W.alert = vi.fn();
+            localStorage.setItem('fg_privacy_level', 'routed'); localStorage.setItem('fg_search_proxy', 'https://w.test'); localStorage.setItem('fg_dev_key', 'pw');
+            localStorage.setItem('fg_project_name', 'keepboth');
+            const cloudA = await put('cloud version'), cloudB = await put('second incoming file');
+            await client.putManifest('keepboth', { files: { 'overlap.txt': cloudA, 'overlap (cloud).txt': cloudB } }, null);
+            await W.agentWriteFile('overlap.txt', 'workspace version');
+            localStorage.setItem('fg_cloudsync_base:keepboth', JSON.stringify({ etag: null, files: { 'overlap.txt': await sha256Hex(bytes('old version')) }, name: 'keepboth' }));
+            await W.openCloudSyncDialog();
+            (document.querySelector('#fg-localsync-overlay .fg-modal-btn-ok') as HTMLElement).click();
+            for (let i = 0; i < 100 && document.getElementById('fg-localsync-overlay'); i++) await new Promise(r => setTimeout(r, 20));
+            expect(await W.agentReadFile('overlap (cloud).txt')).toBe('second incoming file');
+            const copies = (await W.agentListFiles()).map((x: any) => x.name).filter((n: string) => /^overlap \(cloud/.test(n));
+            expect(copies.length).toBe(2);
+            expect(await W.agentReadFile(copies.find((n: string) => n !== 'overlap (cloud).txt'))).toBe('cloud version');
+        } finally { W.fetch = saved.fetch; W.alert = saved.alert; for (const k of ['fg_privacy_level', 'fg_search_proxy', 'fg_dev_key', 'fg_project_name', 'fg_cloudsync_base:keepboth']) localStorage.removeItem(k); }
+    });
     it('asks before syncing a project into a cloud project last synced from another project with the same slug', async () => {
         const W = window as any, { client } = setup(), f = (client as any).doFetch;
         await client.putManifest('release-1-0', { files: {} }, null).catch(() => {});

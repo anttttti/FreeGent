@@ -7,6 +7,9 @@ describe('review 2026-11-10: _isComplete', () => {
         'The build has not completed',
         'I ran the tests; 3 still fail, so the fix is not done',
         'Next I will check what else needs to be done',
+        'Done reading the config file. Next I will check the database schema.',
+        'Completed the first migration step; now running the test suite.',
+        'Terminate any stale worker threads before restarting the server.',
     ])('ordinary prose is not a terminal state: %s', t => expect(_isComplete(t)).toBe(false));
     it.each(['Helsinki. COMPLETED', '13\nCOMPLETED', 'COMPLETED. The answer is 13'])('protocol shapes still pass: %s', t => expect(_isComplete(t)).toBe(true));
 });

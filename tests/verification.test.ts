@@ -132,6 +132,12 @@ describe('a check that ran no test', () => {
     it('a rename in the Local Sandbox that also wrote only scratch files still removed a project file (review of 7116993)', () => {
         expect(run([[code('mv src/old.py /tmp/x; echo 1 > /tmp/o.txt', { exit_code: 0, stdout: '', files_written: ['tmp/o.txt'], files_deleted: ['src/old.py'] })]])).toBe('unverified');
     });
+    it('a run that wrote one project file and removed another records the removal as on purpose', () => {
+        const st = newVerification();
+        noteStep(st, { toolCalls: [code('echo 1 > src/new.py; rm src/old.py', { exit_code: 0, stdout: '', files_written: ['src/new.py'], files_deleted: ['src/old.py'] })] });
+        expect([...st.files].sort()).toEqual(['src/new.py', 'src/old.py']);
+        expect([...st.deleted]).toEqual(['src/old.py']);
+    });
     it('a command that timed out after writing a file is still a change (review of 7bd4d5d)', () => {
         expect(run([[code('python3 slow.py', { error: 'timed out', exit_code: 124, stdout: '', files_written: ['src/out.py'] })]])).toBe('unverified');
     });

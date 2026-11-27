@@ -437,7 +437,7 @@ async function _saveCheckpointSnapshot(chatId, ckptId): Promise<void> {
             await Promise.all(names.map(async name => {
                 try {
                     const { content, encoding, exact } = await _readFsaRecord(name);
-                    const h = _ckptHash(content);
+                    const h = _ckptHash(exact ?? content);   // the bytes when they differ from the text: a BOM added or removed changes no character
                     localHashes[name] = h;
                     const op = prevLocalH[name] === undefined ? 'add' : prevLocalH[name] !== h ? 'modify' : null;
                     if (op) localDelta.push({ name, content, op, ...(encoding ? { encoding } : {}), ...(exact ? { exact } : {}) });
@@ -1005,6 +1005,7 @@ async function _applyLocalSync(items: SyncItem[], chosen: Map<string, SyncAction
     const deletes: string[] = [];
     const markers: string[] = [];
     const names = new Set((await listWorkspaceFileNames()));
+    for (const i of items) names.add(i.path);   // a copy never takes the name of another file this sync writes
     const put = (name: string, rec: any) => writes.push({ name, content: rec.content, encoding: rec.encoding || null, lastModified: rec.lastModified });
     for (const it of items) {
         let act = chosen.get(it.path) ?? it.action;
@@ -1189,6 +1190,7 @@ async function _mergeProjectFiles(data: any): Promise<void> {
             const writes: Array<{ name: string; content: string; encoding?: string | null; lastModified?: number | null }> = [];
             const markers: string[] = [];
             const names = new Set(await listWorkspaceFileNames());
+            for (const i of its) names.add(i.path);   // a copy never takes the name of another file this import writes
             const put = (name: string, f: any) => writes.push({ name, content: f.content, encoding: f.encoding || null, lastModified: f.lastModified });
             for (const it of its) {
                 let act = chosen.get(it.path) ?? it.action;
@@ -1373,6 +1375,7 @@ async function _applyCloudSync(c: { client: CloudSyncClient; slug: string; remot
     const uploads = new Map<string, Uint8Array>();                               // hash → bytes still to send
     const markers: string[] = [];
     const names = new Set(await listWorkspaceFileNames());
+    for (const p of Object.keys(remote.manifest.files)) names.add(p);   // a copy never takes the name of a file this sync may write (a cloud-only file "x (cloud).txt")
     let pullBytes = 0, actualBytes = 0;
     const pull = async (path: string, as: string) => {
         const f = remote.manifest.files[path];

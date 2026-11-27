@@ -35,6 +35,9 @@ const _pausedText = () => `This network has used today's guest quota. Add your o
 
 /** Shows the choice. `retry` re-runs the send once the guest quota is in use. */
 /** `usable` says whether the send would now find a model it can call: with none (a list of models the guest quota does not cover) the dialog stays and says so instead of reopening after the retry. */
+// The level the visitor had before "Use the guest quota" moved them to Routed. Module-level: an offer that replaces an open one (which moved the level and was removed without a click)
+// hands over the restore to the new dialog.
+let _guestPrior: string | null = null;
 export function offerGuestQuota(retry: () => void, usable?: () => boolean): void {
     document.getElementById(DIALOG_ID)?.remove();
     const overlay = document.createElement('div');
@@ -65,9 +68,9 @@ export function offerGuestQuota(retry: () => void, usable?: () => boolean): void
     const status = overlay.querySelector('[data-role="status"]') as HTMLElement;
     const guestBtn = overlay.querySelector('[data-act="guest"]') as HTMLButtonElement;
     // The level the visitor had before "Use the guest quota" moved them to Routed: put back on every path that ends without a guest send.
-    let prior: string | null = null, sent = false;
+    let sent = false;
     const setLevel = (level: string) => (window as any).onPrivacyLevelChange?.(level);
-    const undo = () => { if (prior !== null && !sent) { setLevel(prior); prior = null; } };
+    const undo = () => { if (_guestPrior !== null && !sent) { setLevel(_guestPrior); _guestPrior = null; } };
     overlay.querySelector('[data-act="close"]')!.addEventListener('click', () => { overlay.remove(); undo(); });
     overlay.querySelector('[data-act="key"]')!.addEventListener('click', () => { overlay.remove(); undo(); (window as any).showSettings?.('credentials'); });
     guestBtn.addEventListener('click', async () => {
@@ -75,7 +78,7 @@ export function offerGuestQuota(retry: () => void, usable?: () => boolean): void
         guestBtn.disabled = true;
         status.textContent = 'Checking the guest quota…';
         const before = getPrivacyLevel();
-        if (before !== 'routed' && prior === null) { prior = before; setLevel('routed'); }
+        if (before !== 'routed' && _guestPrior === null) { _guestPrior = before; setLevel('routed'); }
         try { await loadCfWorkerKeys(); } catch {}
         // Closed while the lookup ran: the visitor withdrew the offer, so the send does not go ahead.
         if (!overlay.isConnected) { undo(); return; }
@@ -84,7 +87,7 @@ export function offerGuestQuota(retry: () => void, usable?: () => boolean): void
             guestBtn.disabled = false;
             return;
         }
-        if (guestQuotaOn()) { sent = true; overlay.remove(); retry(); return; }
+        if (guestQuotaOn()) { sent = true; _guestPrior = null; overlay.remove(); retry(); return; }
         undo();
         status.textContent = 'The guest quota is off right now. Add your own key, or try again later.';
         guestBtn.disabled = false;

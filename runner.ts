@@ -572,6 +572,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         return null;
     };
 
+    let historyCleared = false;
     while (_runnerRunning && !_runnerAbort && !blocked && turn < _MAX_TURNS_PER_EPISODE) {
         turn++;
         await _waitWhilePaused();
@@ -604,10 +605,11 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         const challenge = challengeNext; challengeNext = null;
         const prompt = challenge ? challenge
             : isContinuation ? STEP_LIMIT_CONTINUE_PROMPT
-            : turn === 1
+            : turn === 1 || historyCleared
             ? `Process this task file completely.\n\nFile: ${task.path}\n\n${taskContent}\n\n${_userNotesBlock()}${/^- \[ \]/m.test(taskContent) ? 'Tick each acceptance criterion in the file ("- [ ]" to "- [x]") as it holds. ' : ''}When done, call update_task_status("${task.path}", "done", "<one-line summary>").\nIf impossible, call update_task_status("${task.path}", "failed", "<reason>").\nIf you need a value or decision only the user can give (a credential, a choice, a missing fact), do not guess or invent it: finish your reply with a line "BLOCKED: <your question for the user, one sentence>" — the user sees that text and can answer.`
             : `The task "${taskName}" (${task.path}) is not yet marked as done. Do NOT describe what needs to be done — call the tool now. Call update_task_status("${task.path}", "done", "<summary>") immediately, or update_task_status("${task.path}", "failed", "<reason>") if it cannot be done. No text response — tool call only.`;
 
+        if (!challenge && !isContinuation) historyCleared = false;
         const _lastResult: any = await _runnerTurn(prompt);
         const lastMsg: string = typeof _lastResult === 'string' ? _lastResult : (_lastResult?.text ?? '');
 
@@ -649,7 +651,7 @@ async function _runEpisode(task: Task): Promise<EpisodeResult> {
         }
 
         if (typeof _lastResult === 'object' && _lastResult?.finishSignal === 'error' && _isRateLimit(lastMsg, oaiEndpoint()) && _switchToFreeModel()) {
-            _clearHistory();
+            _clearHistory(); historyCleared = true;   // the next model has no history: it gets the whole task prompt, not the reminder that follows a first turn
             continue;
         }
 

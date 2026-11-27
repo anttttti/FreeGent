@@ -8,7 +8,7 @@ const STUBBED = [
     'agentStreaming', 'activeChatId', 'refreshTasks', 'createNewChat', 'switchToChat', 'saveHistory',
     'setChatName', 'loadTaskFiles', 'agentReadFile', 'setTaskStatus', 'transitionTask', 'parseFrontmatter',
     'runAgentTurn', 'appendMessage', 'createResponsePlaceholder', 'getRunnerQa', 'getRunnerMaxConsecutiveFails',
-    '_isRateLimit',
+    '_isRateLimit', '_switchToFreeModel', 'oaiEndpoint',
 ];
 let saved, files, chats, names, turns;
 
@@ -193,6 +193,25 @@ describe('start gates and unblock (v0.62 review R14, R15)', () => {
         await idle();
         expect(turns).toEqual(['fg-tasks/001-a.md', 'follow-up']);
         expect(files['fg-tasks/002-b.md']).toMatch(/^status: todo$/m);
+    });
+});
+
+describe('a rate limit that switches the model', () => {
+    it('sends the whole task to the new model, which has no history, not the reminder of a second turn', async () => {
+        const prompts = [];
+        W._isRateLimit = () => true; W._switchToFreeModel = () => true; W.oaiEndpoint = () => ({});
+        W.runAgentTurn = async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length === 1) return { text: 'HTTP 429', finishSignal: 'error' };
+            W._isRateLimit = () => false;
+            await W.setTaskStatus('fg-tasks/001-a.md', 'done');
+            return { text: 'done', finishSignal: 'completed' };
+        };
+        W.runnerStart();
+        await idle();
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]).toMatch(/Process this task file completely/);
+        expect(prompts[1]).toContain('fg-tasks/001-a.md');
     });
 });
 

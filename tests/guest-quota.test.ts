@@ -59,6 +59,14 @@ describe('guest quota offer', () => {
         expect(state.level).toBe('provider');   // the move to Routed goes with the withdrawn offer, also when guest access is on
     });
 
+    it('an offer that replaces an open one still puts the privacy level back when it is closed', async () => {
+        state.guest = true;
+        offerGuestQuota(vi.fn(), () => false);
+        click('guest'); await flush();   // moved to Routed, no usable model: the dialog stays
+        offerGuestQuota(vi.fn());        // a new send replaces it
+        click('close');
+        expect(state.level).toBe('provider');
+    });
     it('clicking the backdrop withdraws the offer and puts the privacy level back', async () => {
         state.guest = true;
         offerGuestQuota(vi.fn(), () => false);

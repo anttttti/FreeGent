@@ -552,6 +552,14 @@ describe('braveSearch', () => {
         expect(r).toHaveProperty('error');
     });
 
+    it('returns title, url and snippet only, whatever else the Brave result carries', async () => {
+        localStorage.setItem('fg_search_proxy', 'https://proxy.example.com');
+        localStorage.removeItem('fg_brave_key');
+        window.fetch.mockResolvedValue({ ok: true, json: async () => ({ web: { results: [{ title: 'T', url: 'https://x.test/a', description: 'about x', thumbnail: { src: 'big' }, profile: { name: 'X' }, extra_snippets: ['more'] }] } }) });
+        const r = await W.braveSearch('q');
+        expect(r.results).toEqual([{ title: 'T', url: expect.stringContaining('x.test/a'), snippet: 'about x' }]);
+    });
+
     it('calls proxy with encoded query', async () => {
         localStorage.setItem('fg_search_proxy', 'https://proxy.example.com');
         localStorage.removeItem('fg_brave_key');

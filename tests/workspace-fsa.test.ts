@@ -159,6 +159,9 @@ describe('checkpoint restore of the local folder', () => {
         expect((await W.getCheckpointDiff('chat-bom', '2000')).localDelta).toEqual([]);
         expect((await W.getCheckpointDiff('chat-bom', '1000')).localDelta[0]).toMatchObject({ name: 'bom.cs', content: 'A\n', op: 'add' });
         expect((await W.getCheckpointDiff('chat-bom', '1000')).localDelta[0].encoding).toBeUndefined();
+        dir.disk.set('bom.cs', new TextEncoder().encode('A\n'));   // the same text without the BOM is a change
+        await W.saveCheckpointSnapshot('chat-bom', '2500');
+        expect((await W.getCheckpointDiff('chat-bom', '2500')).localDelta).toMatchObject([{ name: 'bom.cs', op: 'modify' }]);
         dir.disk.set('bom.cs', new TextEncoder().encode('changed'));
         await W.saveCheckpointSnapshot('chat-bom', '3000');
         const { localFiles } = await W.restoreCheckpointWorkspace('chat-bom', '1000');

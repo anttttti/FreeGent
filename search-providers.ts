@@ -122,7 +122,8 @@ export async function braveSearch(query: any): Promise<any> {
         const results = data?.web?.results ?? data?.results ?? (data?.type === 'search' && data.web === undefined ? [] : undefined);
         if (!Array.isArray(results)) return { error: 'Brave returned a reply without a results list' };
         const _an = typeof annotateUrl === 'function' ? annotateUrl : (u: string) => u;
-        return { source: 'Brave', results: results.map((r: any) => r?.url ? { ...r, url: _an(r.url) } : r) };
+        // The fields of the other providers (title, url, snippet), not Brave's whole result object (thumbnail, profile, meta_url, extra_snippets…): fewer tokens, and deep-research reads `snippet`, which Brave's own field name (`description`) left empty.
+        return { source: 'Brave', results: results.map((r: any) => r?.url ? { title: r.title, url: _an(r.url), snippet: String(r.description ?? r.snippet ?? r.content ?? '').slice(0, 400) } : r) };
     } catch (e: any) { return { error: `Brave: ${e.message}` }; }
 }
 

@@ -626,7 +626,9 @@ const _GIT_SUB_EXEC: Record<string, RegExp> = {
     'ls-remote': /^--upload-pack(=|$)/,
     archive:     /^(--exec|--remote)(=|$)/,
     push:        /^(--receive-pack|--exec)(=|$)/,
-    grep:        /^(-O|--open-files-in-pager)/,
+    grep:        /^(-O|--open-files-in-pager)|^-[A-Za-z]*f|^--file(=|$)/,   // -f reads the patterns from a file outside the repository (an oracle for its lines)
+    blame:       /^--(contents|ignore-revs-file)(=|$)|^-S/,   // --contents prints any file's lines as the blamed text; the revs file's first line shows in the error
+    annotate:    /^--(contents|ignore-revs-file)(=|$)|^-S/,
     rebase:      /^(-x|--exec)(=|$)/,
 };
 //   Anywhere: writing output to a path, reading paths outside the repository, or turning back on the programs hardenGitArgs turns off (an
@@ -636,7 +638,8 @@ const _GIT_ANY_REFUSED = /^(--output|--no-index|--ext-diff|--textconv)(=|$)/;
 //   also matched as prefixes; the ambiguous ones git rejects itself. `--text` is a real option of its own and is not a prefix of --textconv here. Short write-to-path forms too (F01 of the 2026-11-11 review).
 const _GIT_SUB_LONG: Record<string, string[]> = {
     clone: ['upload-pack', 'config', 'template'], init: ['template'], fetch: ['upload-pack'], pull: ['upload-pack'], 'ls-remote': ['upload-pack'],
-    archive: ['exec', 'remote'], push: ['receive-pack', 'exec'], grep: ['open-files-in-pager'], rebase: ['exec'],
+    archive: ['exec', 'remote'], push: ['receive-pack', 'exec'], grep: ['open-files-in-pager', 'file'], rebase: ['exec'],
+    blame: ['contents', 'ignore-revs-file'], annotate: ['contents', 'ignore-revs-file'],
 };
 const _GIT_ANY_LONG = ['output', 'no-index', 'ext-diff', 'textconv'];
 const _GIT_SUB_WRITE_PATH: Record<string, RegExp> = { archive: /^-o/, 'format-patch': /^(-o|--output-directory)/ };

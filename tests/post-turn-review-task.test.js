@@ -30,6 +30,17 @@ describe('session-log review task', () => {
         expect(files['fg-tasks/ledger.md']).toContain('| 008 |');
         expect(Object.keys(files).some(k => k.startsWith('tasks/'))).toBe(false);
     });
+    it('two logs of one day get two tasks with different titles (the board shows the first of equal titles only)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-27T01:00:00Z') });
+        try {
+            await post.runPostTurnAgents();
+            vi.setSystemTime(new Date('2026-11-27T02:30:00Z'));
+            await post.runPostTurnAgents();
+        } finally { vi.useRealTimers(); }
+        const titles = Object.entries(files).filter(([k]) => /review-session-log/.test(k)).map(([, c]) => /^title: (.*)$/m.exec(c)[1]);
+        expect(titles).toHaveLength(2);
+        expect(new Set(titles).size).toBe(2);
+    });
     it('does not guess an id when the task files cannot be listed (001 may be a task that exists)', async () => {
         files = { 'fg-tasks/001-existing.md': 'precious' };
         W.agentListFiles = async () => { throw new Error('IDB error'); };

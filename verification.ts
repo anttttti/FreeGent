@@ -39,7 +39,7 @@ export const newVerification = (): VerificationState => ({ edits: 0, changedSinc
 const _kinds = (call: any): string[] => call?.name === 'check_page' ? ['page'] : (_checkCommands(String(call?.args?.code ?? '')).map(c => (CHECK_RE.exec(c)?.[0] ?? 'check').replace(/\s+/g, ' ')).filter((k, i, a) => a.indexOf(k) === i).slice(0) || ['check']);
 
 /** Whether the call changed the workspace (scratch files do not count) and which files it names. */
-function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean } {
+function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?: boolean; gone?: string[] } {
     const none = { changed: false, files: [] as string[] };
     const r = call?.result;
     if (!call || !r || typeof r !== 'object' || (r.error && !(call.name === 'execute_code' && Array.isArray(r.files_written) && r.files_written.length))) return none;   // a command that timed out after writing still wrote (review of 7bd4d5d)
@@ -59,8 +59,9 @@ function _changedInfo(call: any): { changed: boolean; files: string[]; deleted?:
     if (call.name === 'execute_code') {
         if (Array.isArray(r.files_written) && r.files_written.length) {
             const files = r.files_written.filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
-            const gone = Array.isArray(r.files_deleted) && r.files_deleted.some((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f));
-            if (files.length || !gone) return { changed: files.length > 0, files };   // only scratch files written, but a project file removed: fall through to the deletion
+            const gone = (Array.isArray(r.files_deleted) ? r.files_deleted : []).filter((f: any) => typeof f === 'string' && !SCRATCH_RE.test(f) && !files.includes(f));
+            // Written and removed in one run: the removals are on purpose too (`gone`). Only scratch files written, but a project file removed: fall through to the deletion.
+            if (files.length || !gone.length) return { changed: files.length > 0, files, ...(files.length && gone.length ? { gone } : {}) };
         }
         // The browser Local Sandbox reports what a command deleted (files_deleted): a change, and a deletion on purpose (codex R1124).
         if (Array.isArray(r.files_deleted) && r.files_deleted.length) {
@@ -159,6 +160,7 @@ export function noteStep(st: VerificationState, record: { toolCalls?: any[] } | 
         if (ch.changed) {
             st.edits++; st.changedSinceCheck = true; st.lastCheck = null; st.failing.clear();
             for (const f of ch.files) { st.files.add(f); if (ch.deleted) st.deleted.add(f); else st.deleted.delete(f); }
+            for (const f of ch.gone ?? []) { st.files.add(f); st.deleted.add(f); }
         }
         const k = _check(c);
         if (k) {

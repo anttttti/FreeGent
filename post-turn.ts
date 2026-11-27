@@ -72,19 +72,21 @@ async function _saveLogAndCreateReviewTask() {
     }
 
     const today    = iso.slice(0, 10);
-    const slug     = `review-session-log-${today}`;
+    // The title names the log by its time, not only its date: two logs of one day got two tasks with one title, and the board and Autopilot show the first of those only (tasks.ts dedupeTasksByTitle).
+    const when     = `${today} ${iso.slice(11, 19)}`;
+    const slug     = `review-session-log-${ts}`;
     const taskPath = `${tasksDir}/${nextId}-${slug}.md`;
     const taskContent = [
         '---',
         `id: ${nextId}`,
-        `title: Review session log ${today} for AI inefficiencies`,
+        `title: Review session log ${when} for AI inefficiencies`,
         'status: open',
         'priority: Low',
         `created: ${today}`,
         `updated: ${today}`,
         '---',
         '',
-        `# Review session log ${today} for AI inefficiencies`,
+        `# Review session log ${when} for AI inefficiencies`,
         '',
         `Read \`${logPath}\` and go through the steps the AI took.`,
         'Look for: stuck loops, redundant file reads, missed parallelism, wrong tools, unnecessary model fallbacks.',
@@ -126,7 +128,7 @@ async function _saveLogAndCreateReviewTask() {
     try {
         const existing = ledgerResult.status === 'fulfilled' ? ledgerResult.value : '';
         const ledger = existing.trim() ? existing : LEDGER_HEADER;
-        const newRow  = `| ${nextId} | open        | Low      | Review session log ${today} for AI inefficiencies |`;
+        const newRow  = `| ${nextId} | open        | Low      | Review session log ${when} for AI inefficiencies |`;
         // The active table ends where `## Archive` starts (as in qa.ts): a row appended after the archive is not an active task.
         const arch = ledger.indexOf('\n## Archive');
         await agentWriteFile(ledgerPath, arch >= 0 ? ledger.slice(0, arch).trimEnd() + '\n' + newRow + '\n' + ledger.slice(arch) : ledger.trimEnd() + '\n' + newRow + '\n');
