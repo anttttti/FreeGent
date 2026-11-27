@@ -6,7 +6,7 @@ beforeEach(() => localStorage.clear());
 
 describe('priority list across tabs', () => {
     it('re-reads fg_main_models after another tab changed it', () => {
-        const a = 'kilo|dots-studio/dots-3-note-preview:free';
+        const a = 'kilo|nvidia/nemotron-3.5-lightning:free';
         const b = 'kilo|nvidia/nemotron-3-ultra-550b-a55b:free';
         W.saveMainModelList([a, b]);
         expect(W.getMainModelList()).toEqual([a, b]);

@@ -5,7 +5,7 @@ import { _endpointCooldown, _markCooldown, getCooldownRemaining } from '../model
 import { _httpErrorFromResponse } from '../retry.ts';
 
 const W = window as any;
-const LING = 'requesty|novita/ling-3.1-flash';
+const LING = 'requesty|nvidia/nemotron-3.5-lightning-30b-a3b';
 const ULTRA = 'requesty|nvidia/nemotron-3-ultra-550b-a55b';
 const KEY = 'synthetic-requesty-credential';
 let findKeysInText: (text: string) => Record<string, string>;
@@ -28,7 +28,7 @@ it('requires credentials, then routes main and worker requests to the Requesty r
     expect(W.getActiveMainModelList()).toEqual([]);
     localStorage.setItem('fg_requesty_key', KEY);
     expect(W.getActiveMainModelList()).toEqual([LING, ULTRA]);
-    expect(W.oaiEndpoint()).toMatchObject({ provider: 'requesty', model: 'novita/ling-3.1-flash', key: KEY,
+    expect(W.oaiEndpoint()).toMatchObject({ provider: 'requesty', model: 'nvidia/nemotron-3.5-lightning-30b-a3b', key: KEY,
         url: 'https://router.requesty.ai/v1/chat/completions' });
     expect(W.resolveWorkerModelSpec(null, null)).toBe(ULTRA);
     expect(modelPageUrl('requesty', 'nvidia/nemotron-3-ultra-550b-a55b')).toBe('https://www.requesty.ai/models/nvidia/nemotron-3-ultra-550b-a55b');
@@ -51,7 +51,7 @@ it('sends authentication and reasoning_effort through background and main comple
     const [url, opts] = request.mock.calls[0] as any;
     expect(url).toBe('https://router.requesty.ai/v1/chat/completions');
     expect(opts.headers.Authorization).toBe(`Bearer ${KEY}`);
-    expect(JSON.parse(opts.body)).toMatchObject({ model: 'novita/ling-3.1-flash', reasoning_effort: 'none' });
+    expect(JSON.parse(opts.body)).toMatchObject({ model: 'nvidia/nemotron-3.5-lightning-30b-a3b', reasoning_effort: 'none' });
     await W.callOAI(() => {}, () => {}, { endpointOverride: W.specToEndpoint(ULTRA),
         localHistory: [{ role: 'user', content: 'Reply OK.' }], toolFilterOverride: new Set(), maxTokens: 100 });
     expect(JSON.parse((request.mock.calls[1] as any)[1].body)).toMatchObject({ reasoning_effort: 'medium' });
@@ -59,7 +59,7 @@ it('sends authentication and reasoning_effort through background and main comple
 
 it.each([[0, 'none'], [1024, 'low'], [8192, 'medium'], [24576, 'high'], [-1, undefined]])(
     'maps thinking budget %s to reasoning_effort %s', (thinkingBudget, effort) => {
-        const p = W.buildChatPayload({ provider: 'requesty', model: 'novita/ling-3.1-flash' }, { messages: [{ role: 'user', content: 'hi' }],
+        const p = W.buildChatPayload({ provider: 'requesty', model: 'nvidia/nemotron-3.5-lightning-30b-a3b' }, { messages: [{ role: 'user', content: 'hi' }],
             maxTokens: 100, stream: true, thinkingBudget });
         expect(p.reasoning_effort).toBe(effort);
         expect(p.chat_template_kwargs).toBeUndefined();
@@ -126,7 +126,7 @@ describe('Requesty cooldowns', () => {
 
 describe('Requesty model discovery', () => {
     const listed = [
-        { id: 'novita/ling-3.1-flash', api: 'chat', input_price: 0, output_price: 0, context_window: 262144, supports_tool_calling: true, supports_reasoning: false, supports_vision: false, created: 1790553600 },
+        { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', api: 'chat', input_price: 0, output_price: 0, context_window: 262144, supports_tool_calling: true, supports_reasoning: false, supports_vision: false, created: 1790553600 },
         { id: 'acme/new-free', api: 'chat', input_price: 0, output_price: 0, context_window: 131072, supports_tool_calling: true, supports_reasoning: true, supports_vision: true, created: 1793000000 },
         { id: 'poolside/laguna-m.1', api: 'chat', input_price: 0, output_price: 0, context_window: 32768, supports_tool_calling: false, created: 1781014014 },
         { id: 'nvidia/nemotron-3-nano-30b-a3b', api: 'chat', input_price: 0, output_price: 0, context_window: 262144, supports_tool_calling: true, created: 1765731275 },

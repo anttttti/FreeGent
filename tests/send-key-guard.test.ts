@@ -25,7 +25,7 @@ async function sendOpensSettings(): Promise<boolean> {
 
 describe('send key guard', () => {
     it('does not open Settings for a Kilo model with a Kilo key', async () => {
-        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|dots-studio/dots-3-note-preview:free']));
+        localStorage.setItem('fg_main_models', JSON.stringify(['kilo|nvidia/nemotron-3.5-lightning:free']));
         localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(await sendOpensSettings()).toBe(false);
     });
@@ -35,7 +35,7 @@ describe('send key guard', () => {
     });
     it('treats a Kilo model without a Kilo key as keyless, even a saved custom entry marked noKey', () => {
         localStorage.setItem('fg_custom_models', JSON.stringify([{ provider: 'kilo', model: 'acme/old-free:free', label: 'Old', noKey: true, media: ['text'] }]));
-        expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(false);
+        expect(W.specHasKey('kilo|nvidia/nemotron-3.5-lightning:free')).toBe(false);
         expect(W.specHasKey('kilo|acme/old-free:free')).toBe(false);
         localStorage.setItem('fg_kilo_key', 'sk-test');
         expect(W.specHasKey('kilo|acme/old-free:free')).toBe(true);
@@ -45,7 +45,7 @@ describe('send key guard', () => {
         localStorage.setItem('fg_search_proxy', 'https://worker.example.dev');
         const orig = W.fetch;
         W.fetch = async () => new Response(JSON.stringify({ guestQuota: true, guestMode: true, KILO_API_KEY: true }), { status: 200 });
-        const kilo = 'kilo|dots-studio/dots-3-note-preview:free';
+        const kilo = 'kilo|nvidia/nemotron-3.5-lightning:free';
         try {
             await W.loadCfWorkerKeys();
             expect(W.specHasKey(kilo)).toBe(true);           // offered at Routed: usable at once, no extra step
@@ -69,9 +69,9 @@ describe('send key guard', () => {
         const orig = W.fetch;
         W.fetch = async () => new Response(JSON.stringify({ KILO_API_KEY: true }), { status: 200 });
         try {
-            expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(false);
+            expect(W.specHasKey('kilo|nvidia/nemotron-3.5-lightning:free')).toBe(false);
             await W.loadCfWorkerKeys();
-            expect(W.specHasKey('kilo|dots-studio/dots-3-note-preview:free')).toBe(true);
+            expect(W.specHasKey('kilo|nvidia/nemotron-3.5-lightning:free')).toBe(true);
         } finally {
             W.fetch = orig;
             localStorage.removeItem('fg_dev_key'); localStorage.removeItem('fg_privacy_level'); localStorage.removeItem('fg_search_proxy');

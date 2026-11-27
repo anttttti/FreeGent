@@ -50,7 +50,7 @@ const ok = (content: string) => ({ body: { choices: [{ message: { content } }], 
 describe('compactHistory request', () => {
     it.each([
         ['moonmath', 'deepseek-v4.1-flash', 'none', 'fg_moonmath_key'],
-        ['requesty', 'novita/ling-3.1-flash', 'none', 'fg_requesty_key'],
+        ['requesty', 'nvidia/nemotron-3.5-lightning-30b-a3b', 'none', 'fg_requesty_key'],
     ])('uses %s authentication and reasoning controls for compaction', async (provider, model, effort, keyName) => {
         localStorage.setItem(keyName, 'synthetic-compaction-key');
         const bodies = serve([ok('GOAL: fix calc.py\nNEXT: run tests')]);

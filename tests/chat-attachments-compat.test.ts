@@ -101,7 +101,7 @@ describe('attachment delivery', () => {
         W.addVoiceButtons=()=>{};W.saveHistory=()=>{};W.updateChatMetaLastAt=()=>{};
         W._updateLogBadge=()=>{};W.generateAndShowSuggestion=()=>{};
         setRoleObject(null);setChatHistory([]);
-        localStorage.setItem('fg_main_models',JSON.stringify(['kilo|dots-studio/dots-3-note-preview:free']));localStorage.setItem('fg_kilo_key','sk-test');
+        localStorage.setItem('fg_main_models',JSON.stringify(['kilo|nvidia/nemotron-3.5-lightning:free']));localStorage.setItem('fg_kilo_key','sk-test');
         let captured:any;
         W.runTurn=vi.fn(async()=>{captured={messages:buildRequestMessages(W.getChatHistory(),'kilo'),role:W.mainAgentRole};return 'Summary delivered.';});
         await W.addFileAttachment(new File(['pdf'],'report.pdf',{type:'application/pdf'}));
