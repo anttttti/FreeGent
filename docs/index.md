@@ -33,7 +33,7 @@ features:
 
 ## What it looks like
 
-![An Autopilot run in FreeGent: each step of the task as a card in the flow view, with the model, timing and a Rerun button on every step](./assets/autopilot-flow.png)
+![A one-minute Autopilot run at 10x speed: when a free model hits its limit, the next one takes over](./assets/demo.gif)
 
 ## Getting started
 
