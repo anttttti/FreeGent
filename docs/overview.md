@@ -63,6 +63,3 @@ The **Project** is the agent's workspace, kept in your browser or in a folder yo
 - [MCP servers](harness/mcp.md) add external tools.
 - [Profiles](webui/settings.md#profiles) save and share model lists, tools and agent settings (never keys).
 
-## Your data stays with you
-
-Keys, chats, settings and project files are stored in your browser, or on your machine when you run locally. The hosted proxy forwards requests to a fixed list of provider hosts and stores nothing. See [How requests reach providers](models/proxy.md) and [Where your data lives](webui/settings.md#where-your-data-lives).

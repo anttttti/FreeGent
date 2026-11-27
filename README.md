@@ -2,6 +2,8 @@
 
 **Free agentic AI for everyone.** An AI agent platform for chat and cowork, running on free AI services and available to anyone with a browser and an internet connection.
 
+https://github.com/user-attachments/assets/68fb762b-daa5-48d4-9ef4-f7cd39c1180c
+
 ![An Autopilot run in FreeGent: each step of the task as a card in the flow view, with the model, timing and a Rerun button on every step](docs/assets/autopilot-flow.png)
 
 **[Open freegent.ai](https://freegent.ai)**: no install, no account. Open **Settings → Credentials**, paste a key from one provider and start chatting. [Default providers](https://freegent.ai/docs/models/providers) lists where to get free keys. While [guest access](https://freegent.ai/docs/models/access) is on, you can also start without a key.
@@ -13,7 +15,6 @@
 - **Runs in your browser.** Project files and code execution (JavaScript, Python, Bash) run fully inside your browser, using an in-browser file system and WASM terminal.
 - **Autonomous cowork.** Drives projects from idea to completion using an integrated Kanban board to track and execute tasks.
 - **Flexible.** Access freegent.ai from any browser, run locally through the CLI/TUI, or self-host the WebUI. All run the same agent harness.
-- **Your data stays with you.** Keys, chats and files stay in your browser. Your chosen privacy level controls where data is sent, and by default (Routed) requests go through FreeGent's Cloudflare Worker, which forwards them and stores nothing. Provider-only sends them straight from your browser to the model endpoints, and Local keeps them on your own network.
 
 ## Three interfaces, one agent
 

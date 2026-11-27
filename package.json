@@ -1,6 +1,6 @@
 {
   "name": "freegent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Browser WebUI and headless CLI for running AI agents against free-tier LLMs and local models",
   "type": "module",
   "engines": { "node": ">=22" },

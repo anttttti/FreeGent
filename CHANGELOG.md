@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.0.1
+
+### Added
+
+- **Programs in the browser sandbox.** `ffmpeg`, `ffprobe`, `duckdb` and `tesseract` run in bash, and `await tool("pdf-lib" | "mammoth" | "xlsx" | "jszip" | "sql.js" | "duckdb" | "tesseract" | "ffmpeg")` loads the same programs in JavaScript. Each is fetched from a pinned CDN version and checked against its SHA-256 before it runs (DuckDB's Parquet and JSON extensions are pinned too). At the Local privacy level only those directories are reachable. A Python import installs under its distribution name, and a package with no Pyodide build says what to use instead.
+- **Multimedia settings.** The Voice tab is now Multimedia and holds Media Model Routing (image, audio and video input). API speech plays, with a default voice per model, and the speech model lists are checked against the providers. New keyword-triggered instructions cover images, audio and video.
+- **Task board from chat.** A chat asked to create tasks writes the Tasks board files, through a keyword-triggered kanban-board skill.
+- **A `/review` skill** that reviews uncommitted or staged changes, a commit, a range or a branch, read-only.
+- **The guest quota offer** appears from the first send, once any main model is available.
+- Model list update of 2026-11-27.
+
+### Fixed
+
+- About 35 fixes from code reviews and explorations, including: `git blame`/`annotate` refuse options that read arbitrary files, the dev server refuses a substituted server key that would move a request to another host and no longer sends back a `.git` directory made by a run, and a local model endpoint is called directly from a hosted page in Routed mode instead of through the Worker.
+
+### Documentation
+
+- The README opens with a demo video.
+- The privacy pages say "your data stays with you" only where it holds: at the Provider-only and Local levels.
+
 ## v1.0
 
 The first stable release. FreeGent is an agentic AI platform for chat and cowork that runs on free model tiers and local models, in the browser or in your terminal, with no install and no account on [freegent.ai](https://freegent.ai).
