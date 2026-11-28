@@ -28,8 +28,7 @@ routes = [{ pattern = "proxy.freegent.ai", custom_domain = true }]
 #
 # Guest quota switch, flipped without a code change (a secret, so deploys keep it):
 #   npx wrangler secret put FG_GUEST_QUOTA      # "1" on, "0" off; or the dashboard: Settings → Variables and Secrets
-#   npx wrangler secret put FG_GUEST_DAILY      # optional: guest model calls per network per UTC day (default 200)
-#   npx wrangler secret put FG_GUEST_SEARCH_DAILY  # optional: guest searches per provider (Tavily, Brave) per network per UTC day (default 20)
+#   npx wrangler secret put FG_GUEST_DAILY      # optional: guest model calls per network per UTC day (default 150)
 
 # Cloudflare Turnstile for the page-fetch path (GET ?url=), which would otherwise be an open web relay: the page
 # passes an invisible check once per session (see "Relay sessions" in worker.js). The site key is public; the widget
@@ -72,7 +71,7 @@ id = "5cf3c4410d8c42e88c416fd7ff5e04b3"
 binding = "FG_SYNC"
 bucket_name = "freegent-sync"
 
-# Guest-quota daily counters, one per client network (GuestCounter in worker.js); each deletes itself after its day. Without it the guest quota stays off.
+# Guest-quota daily counter, one per client network (GuestCounter in worker.js); it deletes itself after its day. Without it the guest quota stays off.
 # SQLite-backed Durable Objects are on the free Workers plan.
 [[durable_objects.bindings]]
 name = "FG_GUEST_COUNTER"
