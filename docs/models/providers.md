@@ -29,7 +29,16 @@ Optional keys for tools:
 | GitHub search (raises 60/hr to 5,000/hr) | `GITHUB_TOKEN` |
 | Stack Overflow search | `STACKEXCHANGE_API_KEY` |
 
-Web search in **Auto** mode tries Tavily, then Brave, then Wikipedia. Image generation uses Pollinations.ai without a key and falls back to Hugging Face when a key is set.
+Image generation uses Pollinations.ai without a key and falls back to Hugging Face when a key is set.
+
+## Web search
+
+`web_search` works with no key, but only on Wikipedia: encyclopedia articles, nothing current or local. Guest access has the same limit. For real web results add a free key under **Settings → Credentials → Search and Tool Keys**:
+
+- **Tavily** ([get a key](https://app.tavily.com/)): the first provider tried.
+- **Brave** ([get a key](https://api-dashboard.search.brave.com/app/keys)): tried after Tavily. A Brave request needs a proxy, so it works at the Routed level, with the local dev server, or with a proxy URL set in **Settings → Privacy**; it does not on a static page at Provider-only.
+
+Both have a free tier with limits and terms of their own, and the plan's terms apply to your use. Brave's plans differ in what they allow (its own guide for Open WebUI asks for its "Data for AI" plan), so check that yours allows feeding results to a model. In **Settings → Tools → Web Search**, **Auto** tries Tavily, then Brave, then Wikipedia, or you can pick one provider. Nothing is searched at the Local privacy level.
 
 ## Keys and variables
 

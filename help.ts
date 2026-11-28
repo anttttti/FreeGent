@@ -36,7 +36,7 @@ const PAGES: Record<string, Page> = {
         '<b>Ctrl/Cmd+K</b> searches chat titles and <b>Ctrl/Cmd+Shift+F</b> searches the text of all your chats.',
     ] },
     settings: { title: 'Settings', doc: 'settings', points: [
-        '<b>Credentials</b> comes first: keys for model providers, search and tools. They stay in this browser and never go into a profile.',
+        '<b>Credentials</b> comes first: keys for model providers, search and tools. They stay in this browser and never go into a profile. Search is Wikipedia only until you add a free Tavily or Brave key.',
         '<b>Models</b> orders providers and fallbacks, <b>Privacy</b> sets where requests may go, and <b>Profiles</b> saves a whole setup.',
         '<b>Agent</b>, <b>Skills</b>, <b>Tools</b>, <b>MCP</b>, <b>Roles</b> and <b>Multimedia</b> shape what the agent does and which tools it may call.',
     ] },
@@ -77,7 +77,7 @@ function openHelp(auto = false): void {
     shownFor = view;
     const hosted = canOfferGuestQuota();
     const intro = auto && view === 'chat'
-        ? `<p><b>Welcome to FreeGent</b>, an AI agent that runs in your browser: it reads and writes project files, runs code and searches the web.
+        ? `<p><b>Welcome to FreeGent</b>, an AI agent that runs in your browser: it reads and writes project files, runs code and searches the web (Wikipedia until you add a free search key in Settings).
            ${hosted ? '<b>No key needed to start:</b> send a message and choose <b>Use the guest quota</b>, shared free-tier accounts with a daily limit for each network.'
                     : 'Add an API key, or connect a local model, to send your first message.'}
            For more models and no guest limit, add your own key in <b>Settings → Credentials</b>.</p>` : '';
@@ -194,7 +194,7 @@ function buildTours(): Record<string, Step[]> {
         ],
         settings: [
             { sel: [stab('credentials')], enter: settingsTab('credentials'), place: ['bottom'], title: 'Credentials',
-              html: 'A key for each model provider you use, plus search and tool keys. Keys stay in this browser and never go into a profile; a passkey can lock them. The guest quota needs none.' },
+              html: 'A key for each model provider you use, plus search and tool keys: a free Tavily or Brave key gives real web search, and without one it is Wikipedia only. Keys stay in this browser and never go into a profile; a passkey can lock them. The guest quota needs none.' },
             { sel: [stab('profiles')], enter: settingsTab('profiles'), place: ['bottom'], title: 'Profiles',
               html: 'Save the current models, tools, skills and agent settings under a name, and switch between setups in a click. Sharing a profile never shares your keys.' },
             { sel: [stab('model')], enter: settingsTab('model'), place: ['bottom'], title: 'Models',

@@ -10,7 +10,7 @@ The first tab, and the one Settings opens on. Everything here is a secret and ne
 
 - **API Credentials**: one field per model provider, a paste box, **Paste from clipboard** and **Extract from file** (each key is matched to its provider by prefix), **Connect** for OpenRouter (approve a key at openrouter.ai instead of pasting one; see [Keep your keys safe](../models/key-safety.md#limit-what-a-leaked-key-can-do)), and the [Developer key](../models/access.md#developer-key) (only for whoever runs the Worker). See [Default providers](../models/providers.md). The HuggingFace key also enables FLUX / SDXL as a fallback for `generate_image`.
 - **Key lock**: optionally encrypt the saved keys with a passkey (Touch ID, Windows Hello, phone or security key), which FreeGent then asks for when it opens. See [Keep your keys safe](../models/key-safety.md#key-lock-with-a-passkey).
-- **Search and Tool Keys**: Tavily and Brave for `web_search`, and the optional GitHub (60 to 5,000 requests per hour) and Stack Exchange (300 to 10,000 per day) keys.
+- **Search and Tool Keys**: Tavily and Brave for `web_search` (without one, search is Wikipedia only: see [Web search](../models/providers.md#web-search)), and the optional GitHub (60 to 5,000 requests per hour) and Stack Exchange (300 to 10,000 per day) keys.
 
 Keys for one MCP server or one custom model stay with that server or model, in the MCP and Models tabs.
 
