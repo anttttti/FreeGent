@@ -140,8 +140,8 @@ const GUEST_OFF = 'The guest quota is off right now: add your own key in Setting
 // Guest calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter): one heavy guest cannot spend the whole
 // quota. Model calls (FG_GUEST_DAILY) and each search provider (FG_GUEST_SEARCH_DAILY, Tavily and Brave counted separately) have their own caps;
 // both overrides work like FG_GUEST_QUOTA, without a commit. The network is all there is to tell visitors apart: a browser can claim any ID it likes.
-const GUEST_DAILY_DEFAULT = 100;
-const GUEST_SEARCH_DAILY_DEFAULT = 10;
+const GUEST_DAILY_DEFAULT = 200;
+const GUEST_SEARCH_DAILY_DEFAULT = 20;
 const _guestDaily = (env) => Math.max(1, Number(env && env.FG_GUEST_DAILY) || GUEST_DAILY_DEFAULT);
 const _guestSearchDaily = (env) => Math.max(1, Number(env && env.FG_GUEST_SEARCH_DAILY) || GUEST_SEARCH_DAILY_DEFAULT);
 // The search providers a guest may use on the operator's key: one endpoint each, counted under its own name.

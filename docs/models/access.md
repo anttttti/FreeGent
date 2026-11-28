@@ -12,7 +12,7 @@ The keys behind 2 and 3 are the Worker's keys ("Worker keys"). They are stored a
 |---|---|---|---|
 | Who | Anyone | Visitors without a key for that provider, while FreeGent has it switched on | The Worker's operator only |
 | Providers | All of them | Groq, Kilo, OpenRouter, TokenHarbor | Every provider the Worker has a key for |
-| Limits | Your provider's free tier or plan | A daily number per network: 100 model requests and 10 searches each on Tavily and Brave, shared quota | The operator's own accounts |
+| Limits | Your provider's free tier or plan | A daily number per network: 200 model requests and 20 searches each on Tavily and Brave, shared quota | The operator's own accounts |
 | Privacy level | Any | Routed | Routed |
 | Whose account the provider sees | Yours | FreeGent's | The operator's |
 
@@ -39,8 +39,8 @@ Only these four providers are covered because their terms allow a service to run
 ### Limits and conditions
 
 - **Shared quota.** Everyone uses the same free-tier accounts, so a provider can run out for everyone before the day ends. The guest models then fail with that provider's rate-limit error, and FreeGent moves on as with any provider.
-- **Daily limit per network.** Each network (an IPv4 address, or an IPv6 /64) gets 100 guest model requests per UTC day by default. After that, the guest models are paused in your browser until 00:00 UTC, and requests say so. Everyone behind the same address (an office, a school, a mobile carrier) shares it.
-- **Web search.** Guests can search with Tavily (10 a day) and Brave (10 a day), each counted apart: a basic search of at most five results. When both are used up, search falls back to Wikipedia until 00:00 UTC. Your own Tavily or Brave key in Settings → Credentials is used instead and has no such limit.
+- **Daily limit per network.** Each network (an IPv4 address, or an IPv6 /64) gets 200 guest model requests per UTC day by default. After that, the guest models are paused in your browser until 00:00 UTC, and requests say so. Everyone behind the same address (an office, a school, a mobile carrier) shares it.
+- **Web search.** Guests can search with Tavily (20 a day) and Brave (20 a day), each counted apart: a basic search of at most five results. When both are used up, search falls back to Wikipedia until 00:00 UTC. Your own Tavily or Brave key in Settings → Credentials is used instead and has no such limit.
 - **Your own key first.** A key of your own for Groq, Kilo, OpenRouter or TokenHarbor is always used instead of the guest quota.
 - **Terms and training.** The providers' terms apply: [Groq](https://console.groq.com/docs/legal), [Kilo](https://kilo.ai/terms), [OpenRouter](https://openrouter.ai/terms), [TokenHarbor](https://tokenharbor.ai/terms). Some free models may use prompts for training, so do not send anything private.
 - **It can be switched off at any time.** FreeGent checks again when you return to the tab and every few minutes; a request made after it is switched off says "The guest quota is off right now", and the guest models leave the lists.

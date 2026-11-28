@@ -427,8 +427,8 @@ describe('CF Worker guest quota', () => {
         expect(noTurnstile.guestQuota).toBe(false);
         const noCounter = await (await worker.fetch(keys(), { ...ON, FG_GUEST_COUNTER: undefined })).json();
         expect(noCounter.guestQuota).toBe(false);
-        expect(on.guestDaily).toBe(100);
-        expect(on.guestSearchDaily).toBe(10);
+        expect(on.guestDaily).toBe(200);
+        expect(on.guestSearchDaily).toBe(20);
         const dev = await (await worker.fetch(keys(true), ON)).json();
         expect(dev).toMatchObject({ guestQuota: false, MOONMATH_API_KEY: true });
         // The setting itself is reported to everyone, the Developer key included, for Settings → Models to show.
@@ -505,7 +505,7 @@ describe('CF Worker guest quota', () => {
 
         it('is offered to visitors with the keys the Worker holds, and is not without a session', async () => {
             const env = { ...ON, ...SKEYS };
-            expect(await (await worker.fetch(keys(), env)).json()).toMatchObject({ TAVILY_API_KEY: true, BRAVE_API_KEY: true, guestSearchDaily: 10 });
+            expect(await (await worker.fetch(keys(), env)).json()).toMatchObject({ TAVILY_API_KEY: true, BRAVE_API_KEY: true, guestSearchDaily: 20 });
             const r = await worker.fetch(search(TAVILY, ''), env);
             expect(r.status).toBe(401);
         });
@@ -522,14 +522,14 @@ describe('CF Worker guest quota', () => {
             expect(other.status).toBe(403);
             expect((await other.json()).error).toMatch(/web search only/);
         });
-        it('caps each provider at 10 a day per network, apart from each other and from model calls; the refusal does not pause the models', async () => {
+        it('caps each provider at 20 a day per network, apart from each other and from model calls; the refusal does not pause the models', async () => {
             const env = { ...ON, ...SKEYS }, s = await session();
-            for (let i = 0; i < 10; i++) expect((await worker.fetch(search(TAVILY, s), env)).status).toBe(200);
+            for (let i = 0; i < 20; i++) expect((await worker.fetch(search(TAVILY, s), env)).status).toBe(200);
             const over = await worker.fetch(search(TAVILY, s), env);
             expect(over.status).toBe(403);
             expect(over.headers.get('X-FG-Guest')).toBe('search-limit');   // not "limit": that one pauses the guest models in the page
-            expect((await over.json()).error).toMatch(/guest Tavily searches for today \(10\)/);
-            expect((await worker.fetch(search(BRAVE, s), env)).status).toBe(200);   // Brave has its own ten
+            expect((await over.json()).error).toMatch(/guest Tavily searches for today \(20\)/);
+            expect((await worker.fetch(search(BRAVE, s), env)).status).toBe(200);   // Brave has its own twenty
             expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);   // so do the model calls
             // The visitor's own key is not counted or capped.
             expect((await worker.fetch(call(TAVILY, { auth: 'Bearer tvly-mine', method: 'POST', body: { query: 'q' } }), env)).status).toBe(200);
