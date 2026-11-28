@@ -137,10 +137,18 @@ const GUEST_HOSTS = new Set(['api.groq.com', 'api.kilo.ai', 'openrouter.ai', 'ap
 // Model catalogs that need no key: a keyless GET of one passes through anonymously, never as a guest call (no Turnstile check, no quota use, no Worker key).
 const PUBLIC_CATALOGS = new Set(['https://api.kilo.ai/api/gateway/models', 'https://openrouter.ai/api/v1/models']);
 const GUEST_OFF = 'The guest quota is off right now: add your own key in Settings → Credentials';
-// Guest model calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter):
-// one heavy guest cannot spend the whole quota. FG_GUEST_DAILY overrides it, like FG_GUEST_QUOTA without a commit.
-const GUEST_DAILY_DEFAULT = 150;
+// Guest calls per client network (see _clientNet) per UTC day, counted in a Durable Object (GuestCounter): one heavy guest cannot spend the whole
+// quota. Model calls (FG_GUEST_DAILY) and each search provider (FG_GUEST_SEARCH_DAILY, Tavily and Brave counted separately) have their own caps;
+// both overrides work like FG_GUEST_QUOTA, without a commit. The network is all there is to tell visitors apart: a browser can claim any ID it likes.
+const GUEST_DAILY_DEFAULT = 100;
+const GUEST_SEARCH_DAILY_DEFAULT = 10;
 const _guestDaily = (env) => Math.max(1, Number(env && env.FG_GUEST_DAILY) || GUEST_DAILY_DEFAULT);
+const _guestSearchDaily = (env) => Math.max(1, Number(env && env.FG_GUEST_SEARCH_DAILY) || GUEST_SEARCH_DAILY_DEFAULT);
+// The search providers a guest may use on the operator's key: one endpoint each, counted under its own name.
+const GUEST_SEARCH = {
+    'api.tavily.com':       { kind: 'tavily', envKey: 'TAVILY_API_KEY', header: null,                   ok: (m, p) => m === 'POST' && p === '/search' },
+    'api.search.brave.com': { kind: 'brave',  envKey: 'BRAVE_API_KEY',  header: 'X-Subscription-Token', ok: (m, p) => m === 'GET' && p === '/res/v1/web/search' },
+};
 // A guest refusal: 403 so the page does not retry it, with X-FG-Guest saying why ("off" or "limit") so it can
 // update which models it offers.
 function _guestRefusal(kind, message) {
@@ -148,28 +156,41 @@ function _guestRefusal(kind, message) {
         status: 403, headers: { ...CORS, 'Content-Type': 'application/json', 'X-FG-Proxy-Error': '1', 'X-FG-Guest': kind },
     });
 }
-// Counts one guest call for this network today and returns the count, or null when the counter cannot be reached
-// (no counting, no guest quota: the caller answers 503, which is not a spent day).
-async function _guestCount(request, env) {
+async function _hashName(text) {
+    return _hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))).slice(0, 32);   // objects are named by a hash: no address in a name
+}
+// Counts one guest call ("llm", "tavily" or "brave") for this network today and returns the count, or null when the counter cannot be
+// reached (no counting, no guest quota: the caller answers 503, which is not a spent day).
+async function _guestHit(request, env, kind) {
     try {
         const day = new Date().toISOString().slice(0, 10);
-        const stub = env.FG_GUEST_COUNTER.get(env.FG_GUEST_COUNTER.idFromName(_clientNet(request)));
-        const r = await stub.fetch('https://guest-counter/hit', { method: 'POST', body: JSON.stringify({ day }) });
+        const stub = env.FG_GUEST_COUNTER.get(env.FG_GUEST_COUNTER.idFromName(await _hashName(`n|${_clientNet(request)}`)));
+        const r = await stub.fetch('https://guest-counter/hit', { method: 'POST', body: JSON.stringify({ day, kind }) });
         const { count } = await r.json();
         return Number.isFinite(count) ? count : null;
     } catch { return null; }
 }
 
-// One counter per client network: {day, count}, reset when the UTC day changes. A Durable Object handles its requests
-// one at a time, so two parallel calls cannot both read the same count.
+// One counter per network: {day, llm, tavily, brave}, restarted when the UTC day changes. A Durable Object handles
+// its requests one at a time, so two parallel calls cannot both read the same count. An alarm deletes the object's storage once its day
+// is over (and not before: a network back on the next day keeps its object, counted afresh), so idle networks leave nothing behind.
+const _nextUtcMidnight = (day) => Date.parse(day + 'T00:00:00Z') + 24 * 3600 * 1000;
 export class GuestCounter {
     constructor(ctx) { this.ctx = ctx; }
     async fetch(request) {
-        const { day } = await request.json();
-        const cur = (await this.ctx.storage.get('c')) || {};
-        const count = cur.day === day ? cur.count + 1 : 1;
-        await this.ctx.storage.put('c', { day, count });
-        return new Response(JSON.stringify({ count }), { headers: { 'Content-Type': 'application/json' } });
+        const { day, kind = 'llm' } = await request.json();
+        let cur = (await this.ctx.storage.get('c')) || {};
+        if (cur.day !== day) cur = { day };
+        cur[kind] = (cur[kind] || 0) + 1;
+        await this.ctx.storage.put('c', cur);
+        if (this.ctx.storage.setAlarm && !(await this.ctx.storage.getAlarm())) await this.ctx.storage.setAlarm(_nextUtcMidnight(day) + 3600 * 1000);
+        return new Response(JSON.stringify({ count: cur[kind] }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    async alarm() {
+        const cur = await this.ctx.storage.get('c');
+        const today = new Date().toISOString().slice(0, 10);
+        if (cur && cur.day === today) { await this.ctx.storage.setAlarm(_nextUtcMidnight(today) + 3600 * 1000); return; }   // used again today: keep it until its day is over
+        await this.ctx.storage.deleteAll();
     }
 }
 
@@ -467,7 +488,7 @@ export default {
             const available = {};
             const unlocked = await _unlocked(request, env);
             const guest = !unlocked && _guestQuotaOn(env);
-            const guestKeys = new Set([...GUEST_HOSTS].map(h => PROVIDER_KEY_MAP[h]));
+            const guestKeys = new Set([...GUEST_HOSTS].map(h => PROVIDER_KEY_MAP[h]).concat(Object.values(GUEST_SEARCH).map(g => g.envKey)));
             for (const envKey of [...Object.values(PROVIDER_KEY_MAP), ...Object.values(SEARCH_HEADER_MAP).map(v => v.envKey)]) {
                 available[envKey] = (unlocked || (guest && guestKeys.has(envKey))) && !!(env && env[envKey]);
             }
@@ -475,7 +496,7 @@ export default {
             // The operator's setting itself, for every client (Settings → Models shows it): on even for a Developer-key
             // session, which uses all Worker keys and so is never offered the guest quota.
             available.guestMode = _guestQuotaOn(env);
-            if (available.guestMode) available.guestDaily = _guestDaily(env);
+            if (available.guestMode) { available.guestDaily = _guestDaily(env); available.guestSearchDaily = _guestSearchDaily(env); }
             return new Response(JSON.stringify(available), {
                 headers: { ...CORS, 'Content-Type': 'application/json' },
             });
@@ -595,14 +616,31 @@ export default {
                     if (await _rateLimited(request, env, 'key')) return _err(429, 'Worker-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
                     rateChecked = true;
                     const limit = _guestDaily(env);
-                    const used = await _guestCount(request, env);
-                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials', { 'Retry-After': '15' });   // the client reads a bare 503 as a provider's quota and cools the model for an hour or a week; 15 s is what it waits now
+                    const used = await _guestHit(request, env, 'llm');
+                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials', { 'Retry-After': '15' });   // the client reads a bare 503 as a provider's quota
                     if (used > limit)
                         return _guestRefusal('limit', `This network has used its guest quota for today (${limit} requests): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
                     guest = true;
                 }
-                const envKey = isEmpty && (unlocked || guest) ? PROVIDER_KEY_MAP[hostname] : null;
-                const search = unlocked ? SEARCH_HEADER_MAP[hostname] : null;
+                // Web search on the operator's Tavily or Brave key, for a visitor with no key of their own: one endpoint, a few searches a day per provider.
+                const gs = GUEST_SEARCH[hostname];
+                let guestSearch = false;
+                if (gs && isEmpty && !unlocked && env && env[gs.envKey] && !(gs.header && (headers[gs.header] || headers[gs.header.toLowerCase()]))) {
+                    if (!_guestQuotaOn(env)) return _guestRefusal('off', GUEST_OFF);
+                    if (!(await _relaySessionOk(request, env))) return _sessionRequired(env);
+                    if (!gs.ok(method, new URL(target).pathname.replace(/\/+$/, '')))
+                        return _err(403, 'Guest access covers web search only: add your own key in Settings → Credentials');
+                    if (await _rateLimited(request, env, 'key')) return _err(429, 'Worker-key rate limit exceeded — add your own API key in Settings, or try again in a minute');
+                    rateChecked = true;
+                    const limit = _guestSearchDaily(env);
+                    const used = await _guestHit(request, env, gs.kind);
+                    if (used === null) return _err(503, 'The guest quota counter is unavailable right now: try again in a moment, or add your own key in Settings → Credentials', { 'Retry-After': '15' });
+                    if (used > limit)
+                        return _guestRefusal('search-limit', `This network has used its guest ${gs.kind === 'tavily' ? 'Tavily' : 'Brave'} searches for today (${limit}): add your own key in Settings → Credentials, or try again after 00:00 UTC`);
+                    guestSearch = true;
+                }
+                const envKey = isEmpty && (unlocked || guest || guestSearch) ? PROVIDER_KEY_MAP[hostname] : null;
+                const search = unlocked || guestSearch ? SEARCH_HEADER_MAP[hostname] : null;
                 const searchMissing = search && !(headers[search.header] || headers[search.header.toLowerCase()]);
                 const injecting = (envKey && env[envKey]) || (searchMissing && env[search.envKey]);
                 if (injecting && !rateChecked && await _rateLimited(request, env, 'key'))
@@ -612,6 +650,11 @@ export default {
                 if (searchMissing && env[search.envKey]) headers[search.header] = env[search.envKey];
 
                 let outBody = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
+                // A guest search is the cheap kind: a query, a basic depth and at most five results (a deeper one costs more of the operator's credits).
+                if (guestSearch && hostname === 'api.tavily.com') {
+                    try { const j = JSON.parse(outBody); outBody = JSON.stringify({ query: String(j?.query ?? ''), search_depth: 'basic', max_results: Math.min(5, Number(j?.max_results) || 5), include_answer: false }); }
+                    catch { return _err(400, 'Invalid search request'); }
+                }
                 // OpenRouter isolates a policy block to one end user when told who it is: a stable ID per guest session
                 // (from its signature, not the visitor's address), so one guest cannot get the operator's account blocked.
                 if (guest && hostname.endsWith('openrouter.ai') && method === 'POST') {

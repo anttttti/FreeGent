@@ -18,6 +18,12 @@ const SEARCH_TIMEOUT_MS = 30_000;
 // stalled held the turn until the user stopped it (codex R252).
 export function _searchSignal(): AbortSignal { return combineSignals(activeAbortController?.signal, SEARCH_TIMEOUT_MS)!; }
 
+/** The Worker's message when a guest has used the day's searches on its key (X-FG-Guest: search-limit), else null. Auto mode then tries the next provider. */
+async function _guestSearchSpent(resp: Response): Promise<string | null> {
+    if (resp.headers?.get?.('X-FG-Guest') !== 'search-limit') return null;
+    return String((await resp.json().catch(() => null))?.error || 'The guest searches for today are used up');
+}
+
 export async function tavilySearch(query: any): Promise<{ error: string; authFailed?: boolean; source?: undefined; results?: undefined; } | { source: string; results: any; error?: undefined; }> {
     const localKey  = getTavilyKey();
     const cfProxy   = typeof getEffectiveProxy === 'function' ? getEffectiveProxy() : '';
@@ -56,6 +62,8 @@ export async function tavilySearch(query: any): Promise<{ error: string; authFai
             return { error: 'Tavily API key not configured.' };
         }
         if (!resp.ok) {
+            const spent = await _guestSearchSpent(resp);   // a guest's searches for the day are used up
+            if (spent) return { error: spent };
             if (resp.status === 401 || resp.status === 403) {
                 let detail = '';
                 try { detail = (await resp.json())?.detail?.error ?? ''; } catch {}
@@ -113,7 +121,7 @@ export async function braveSearch(query: any): Promise<any> {
             return { error: 'Brave search requires a Brave API key (Settings → Credentials) or a proxy URL (Settings → Privacy).' };
         }
 
-        if (!resp.ok) return { error: `Brave HTTP ${resp.status}` };
+        if (!resp.ok) return { error: (await _guestSearchSpent(resp)) ?? `Brave HTTP ${resp.status}` };
         const data = await resp.json();
         // Brave Search API v1 returns { web: { results: [...] } }; legacy proxies
         // may return { results: [...] } directly — support both.

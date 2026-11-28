@@ -398,11 +398,11 @@ describe('CF Worker guest quota', () => {
     let ON: any;
     beforeEach(() => { ON = { ...TS, ...KEYS, FG_GUEST_QUOTA: '1', FG_RATE_LIMITER: limiter(true), FG_GUEST_COUNTER: counterNamespace() }; });
     const IP = '203.0.113.9';
-    const call = (url: string, opts: { session?: string; auth?: string; dev?: boolean; model?: string } = {}) => new Request('https://fg-proxy.example.workers.dev/', {
+    const call = (url: string, opts: { session?: string; auth?: string; dev?: boolean; model?: string; method?: string; body?: any; headers?: Record<string, string> } = {}) => new Request('https://fg-proxy.example.workers.dev/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'CF-Connecting-IP': IP,
             ...(opts.session ? { 'X-FG-Session': opts.session } : {}), ...(opts.dev ? { 'X-FG-Dev-Key': 'pw' } : {}) },
-        body: JSON.stringify({ url, headers: opts.auth ? { Authorization: opts.auth } : {}, body: JSON.stringify({ model: opts.model ?? 'm:free', messages: [] }) }),
+        body: JSON.stringify({ url, ...(opts.method ? { method: opts.method } : {}), headers: { ...(opts.auth ? { Authorization: opts.auth } : {}), ...opts.headers }, body: JSON.stringify(opts.body ?? { model: opts.model ?? 'm:free', messages: [] }) }),
     });
     const keys = (dev = false) => new Request('https://fg-proxy.example.workers.dev/keys', { headers: { Origin: ORIGIN, 'CF-Connecting-IP': IP, ...(dev ? { 'X-FG-Dev-Key': 'pw' } : {}) } });
     const GROQ = 'https://api.groq.com/openai/v1/chat/completions';
@@ -427,7 +427,8 @@ describe('CF Worker guest quota', () => {
         expect(noTurnstile.guestQuota).toBe(false);
         const noCounter = await (await worker.fetch(keys(), { ...ON, FG_GUEST_COUNTER: undefined })).json();
         expect(noCounter.guestQuota).toBe(false);
-        expect(on.guestDaily).toBe(150);
+        expect(on.guestDaily).toBe(100);
+        expect(on.guestSearchDaily).toBe(10);
         const dev = await (await worker.fetch(keys(true), ON)).json();
         expect(dev).toMatchObject({ guestQuota: false, MOONMATH_API_KEY: true });
         // The setting itself is reported to everyone, the Developer key included, for Settings → Models to show.
@@ -497,6 +498,65 @@ describe('CF Worker guest quota', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    describe('web search', () => {
+        const TAVILY = 'https://api.tavily.com/search', BRAVE = 'https://api.search.brave.com/res/v1/web/search?q=x&count=10';
+        const SKEYS = { TAVILY_API_KEY: 'tv-op', BRAVE_API_KEY: 'br-op' };
+        const search = (url: string, session: string) => call(url, { session, method: url.includes('brave') ? 'GET' : 'POST', body: url.includes('brave') ? undefined : { query: 'q', search_depth: 'advanced', max_results: 20, include_answer: true, include_raw_content: true } });
+
+        it('is offered to visitors with the keys the Worker holds, and is not without a session', async () => {
+            const env = { ...ON, ...SKEYS };
+            expect(await (await worker.fetch(keys(), env)).json()).toMatchObject({ TAVILY_API_KEY: true, BRAVE_API_KEY: true, guestSearchDaily: 10 });
+            const r = await worker.fetch(search(TAVILY, ''), env);
+            expect(r.status).toBe(401);
+        });
+        it('runs on the Worker key, as a basic search of at most five results, and only on the search endpoint', async () => {
+            const env = { ...ON, ...SKEYS }, s = await session();
+            expect((await worker.fetch(search(TAVILY, s), env)).status).toBe(200);
+            const [url, init] = sent();
+            expect(url).toBe(TAVILY);
+            expect(init.headers.Authorization).toBe('Bearer tv-op');
+            expect(JSON.parse(init.body)).toEqual({ query: 'q', search_depth: 'basic', max_results: 5, include_answer: false });
+            expect((await worker.fetch(search(BRAVE, s), env)).status).toBe(200);
+            expect(sent()[1].headers['X-Subscription-Token']).toBe('br-op');
+            const other = await worker.fetch(call('https://api.tavily.com/extract', { session: s }), env);
+            expect(other.status).toBe(403);
+            expect((await other.json()).error).toMatch(/web search only/);
+        });
+        it('caps each provider at 10 a day per network, apart from each other and from model calls; the refusal does not pause the models', async () => {
+            const env = { ...ON, ...SKEYS }, s = await session();
+            for (let i = 0; i < 10; i++) expect((await worker.fetch(search(TAVILY, s), env)).status).toBe(200);
+            const over = await worker.fetch(search(TAVILY, s), env);
+            expect(over.status).toBe(403);
+            expect(over.headers.get('X-FG-Guest')).toBe('search-limit');   // not "limit": that one pauses the guest models in the page
+            expect((await over.json()).error).toMatch(/guest Tavily searches for today \(10\)/);
+            expect((await worker.fetch(search(BRAVE, s), env)).status).toBe(200);   // Brave has its own ten
+            expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);   // so do the model calls
+            // The visitor's own key is not counted or capped.
+            expect((await worker.fetch(call(TAVILY, { auth: 'Bearer tvly-mine', method: 'POST', body: { query: 'q' } }), env)).status).toBe(200);
+        });
+        it('counts per network: another address has its own searches, an ID a browser sends changes nothing', async () => {
+            const env = { ...ON, ...SKEYS, FG_GUEST_SEARCH_DAILY: '2' }, s = await session();
+            for (let i = 0; i < 2; i++) expect((await worker.fetch(search(TAVILY, s), env)).status).toBe(200);
+            const spent = search(TAVILY, s); spent.headers.set('X-FG-Client', 'some-other-browser-id');
+            expect((await worker.fetch(spent, env)).status).toBe(403);
+            // The session is bound to the address it was made for, so a visitor elsewhere makes their own.
+            const other = '198.51.100.7';
+            const s2 = (await (await worker.fetch(new Request('https://fg-proxy.example.workers.dev/session', { method: 'POST', headers: { Origin: ORIGIN, 'CF-Connecting-IP': other }, body: JSON.stringify({ token: 't' }) }), env)).json()).session as string;
+            const there = search(TAVILY, s2); there.headers.set('CF-Connecting-IP', other);
+            expect((await worker.fetch(there, env)).status).toBe(200);
+        });
+    });
+
+    it('keeps no raw address in the names of the guest counters', async () => {
+        const names: string[] = [];
+        const ns = counterNamespace(), idFromName = ns.idFromName;
+        ns.idFromName = (n: string) => { names.push(n); return idFromName(n); };
+        const env = { ...ON, FG_GUEST_COUNTER: ns }, s = await session();
+        expect((await worker.fetch(call(GROQ, { session: s }), env)).status).toBe(200);
+        expect(names).toHaveLength(1);
+        expect(names[0]).toMatch(/^[0-9a-f]{32}$/);
+    });
+
     it('the Developer key is never counted against the guest cap, and an own key always wins over Worker keys', async () => {
         const env = { ...ON, FG_GUEST_DAILY: '1' };
         for (let i = 0; i < 3; i++) expect((await worker.fetch(call(GROQ, { dev: true }), env)).status).toBe(200);
@@ -542,5 +602,37 @@ describe('CF Worker guest quota', () => {
         await worker.fetch(call(OR, { dev: true }), ON);
         expect(JSON.parse(sent()[1].body).user).toBeUndefined();
         expect(sent()[1].headers.Authorization).toBe('Bearer or-op');
+    });
+});
+
+describe('GuestCounter storage', () => {
+    function counter() {
+        const store = new Map<string, any>(); let alarm: number | null = null;
+        const ctx = { storage: { get: async (k: string) => store.get(k), put: async (k: string, v: any) => { store.set(k, v); },
+            getAlarm: async () => alarm, setAlarm: async (t: number) => { alarm = t; }, deleteAll: async () => { store.clear(); alarm = null; } } };
+        return { obj: new GuestCounter(ctx as any), store, alarm: () => alarm };
+    }
+    const hit = (o: GuestCounter, day: string, kind?: string) => o.fetch(new Request('https://x/hit', { method: 'POST', body: JSON.stringify({ day, kind }) })).then(r => r.json());
+    afterEach(() => vi.useRealTimers());
+
+    it('counts each kind apart, restarts on a new day, and has its storage deleted once its day is over', async () => {
+        const c = counter();
+        expect((await hit(c.obj, '2026-11-28', 'tavily')).count).toBe(1);
+        expect((await hit(c.obj, '2026-11-28', 'tavily')).count).toBe(2);
+        expect((await hit(c.obj, '2026-11-28', 'brave')).count).toBe(1);
+        expect(c.alarm()).toBe(Date.parse('2026-11-29T01:00:00Z'));   // an hour after the day ends
+        vi.useFakeTimers({ now: Date.parse('2026-11-29T01:00:01Z'), toFake: ['Date'] });
+        await c.obj.alarm();
+        expect(c.store.size).toBe(0);
+        expect(c.alarm()).toBeNull();
+    });
+    it('keeps an object that was used again today when the alarm of an earlier day fires', async () => {
+        const c = counter();
+        await hit(c.obj, '2026-11-28');
+        vi.useFakeTimers({ now: Date.parse('2026-11-29T01:00:01Z'), toFake: ['Date'] });
+        expect((await hit(c.obj, '2026-11-29')).count).toBe(1);   // restarted, same object
+        await c.obj.alarm();
+        expect(c.store.get('c')).toEqual({ day: '2026-11-29', llm: 1 });   // today's count survives
+        expect(c.alarm()).toBe(Date.parse('2026-11-30T01:00:00Z'));
     });
 });
